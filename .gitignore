@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.vsix
+*.tgz
+.vscode-test/
+.DS_Store
+# The old extension's packages, kept locally; its code is on the v0 branch.
+version/

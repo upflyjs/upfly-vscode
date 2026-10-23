@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Lint, the comment check, typecheck and the unit tests, which start the published CLI on
+    # fixture copies, so they run on every system the extension supports.
+    name: check / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  integration:
+    # The extension in a real VS Code: the oldest version it supports, whose own Node.js is
+    # the oldest that runs the engine, and the current release. Each run prints the extension
+    # host's VS Code, Node.js and Electron versions, which is how the Node.js each editor
+    # carries is measured. Then the same in a workspace VS Code does not trust. Linux has no
+    # display, so VS Code runs under xvfb there.
+    name: integration / ${{ matrix.os }} / VS Code ${{ matrix.vscode }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        vscode: ['1.101.0', stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: From the repository
+        shell: bash
+        env:
+          UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:integration; else npm run test:integration; fi
+      - name: In a workspace VS Code does not trust
+        shell: bash
+        env:
+          UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:untrusted; else npm run test:untrusted; fi
+
+  package:
+    # One package per platform, each carrying that platform's sharp and no other, built on one
+    # Linux runner: npm installs another platform's binaries on request, and the script checks
+    # each package's contents. The packages are this run's artifacts, for the jobs below and
+    # to try by hand; nothing here publishes them.
+    name: package / ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          [
+            win32-x64,
+            win32-arm64,
+            darwin-x64,
+            darwin-arm64,
+            linux-x64,
+            linux-arm64,
+            alpine-x64,
+            alpine-arm64,
+          ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/package.mjs ${{ matrix.target }} --out vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: vsix/*.vsix
+          if-no-files-found: error
+
+  installed:
+    # Each package installed into VS Code on its own system, and the integration tests run
+    # against it: an audit and a search through the CLI and the sharp it carries.
+    name: installed / ${{ matrix.target }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: win32-x64, os: windows-latest }
+          - { target: win32-arm64, os: windows-11-arm }
+          - { target: darwin-x64, os: macos-15-intel }
+          - { target: darwin-arm64, os: macos-latest }
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: vsix
+      - name: The integration tests on the installed package
+        shell: bash
+        run: |
+          export UPFLY_VSIX="$(ls "$GITHUB_WORKSPACE"/vsix/*.vsix)"
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npx vscode-test --label package; else npx vscode-test --label package; fi
+
+  installed-alpine:
+    # VS Code itself does not run on Alpine Linux; the extension runs there inside a remote
+    # server, on that server's Node.js. So the engine the package carries runs on Alpine's own
+    # Node.js, in a container: an audit, with sharp measuring, and a search.
+    name: installed / ${{ matrix.target }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: alpine-x64, os: ubuntu-latest }
+          - { target: alpine-arm64, os: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: vsix
+      - name: The carried engine on Alpine's Node.js
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work node:22-alpine \
+            sh -c 'node scripts/engine-check.mjs vsix/*.vsix'
