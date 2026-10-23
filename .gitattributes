@@ -1,0 +1,4 @@
+# Biome formats with LF. Windows checkouts default to core.autocrlf=true, which would hand it
+# CRLF files and fail the lint on Windows only. Pinning eol=lf keeps the working tree the same on
+# every platform, the fixtures included.
+* text=auto eol=lf
