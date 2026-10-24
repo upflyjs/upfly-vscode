@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { RunFile, RunList, UndoResult } from './contract.js';
+import type { HostOutcome } from './host.js';
 import {
   accept,
   beforeDocument,
   beforeText,
   lineKey,
   reviewOf,
+  sameRun,
   undoneText,
 } from './review-model.js';
 
@@ -114,6 +116,16 @@ describe('reviewOf', () => {
     ).toBe(true);
   });
 
+  it('lets lines and files be undone alone in a run that stands', () => {
+    expect(reviewOf(run([file('index.html', [10])]), undefined)?.partsUndoable).toBe(true);
+  });
+
+  it('lets nothing but the whole undo touch a run that stopped part way, as the CLI refuses', () => {
+    expect(
+      reviewOf(run([file('index.html', [10])], { state: 'interrupted' }), undefined)?.partsUndoable,
+    ).toBe(false);
+  });
+
   it('counts the lines still waiting for Accept or Undo', () => {
     expect(
       reviewOf(run([file('a.css', [2]), file('index.html', [10, 12])]), undefined)?.pending,
@@ -134,6 +146,40 @@ describe('accept', () => {
       runId: 'r1',
       accepted: ['index.html:10'],
     });
+  });
+});
+
+describe('sameRun', () => {
+  const listed = (id: string): HostOutcome => ({
+    kind: 'result',
+    result: {
+      type: 'result',
+      command: 'undo',
+      exitCode: 0,
+      undone: null,
+      part: null,
+      commit: null,
+      notes: [],
+      run: run([file('index.html', [10])], { id }),
+    },
+  });
+
+  it('lets an undo go on while the last run is the one its button was shown for', () => {
+    expect(sameRun('r1').accept(listed('r1'))).toBeNull();
+  });
+
+  it('stops an undo once another run has become the last', () => {
+    expect(sameRun('r1').accept(listed('r2'))).toBe(
+      'The last run is no longer run r1, which this button was for, so nothing was undone. The review is read again.',
+    );
+  });
+
+  it('stops an undo when the last run cannot be read', () => {
+    expect(sameRun('r1').accept({ kind: 'cancelled' })).not.toBeNull();
+  });
+
+  it('lists the run, and changes nothing, to check', () => {
+    expect([sameRun('r1').command, sameRun('r1').args]).toEqual(['undo', ['--list']]);
   });
 });
 

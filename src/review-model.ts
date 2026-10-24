@@ -6,6 +6,7 @@
  */
 
 import type { RunFile, RunList, RunPath, UndoResult } from './contract.js';
+import type { HostOutcome } from './host.js';
 
 /**
  * Where one changed line stands: waiting for Accept or Undo, accepted, undone, or in a file
@@ -49,6 +50,8 @@ export interface Review {
   readonly pending: number;
   /** Whether the review goes on: some line waits, or the run stopped part way. */
   readonly open: boolean;
+  /** Whether a line, a file or an original can be undone alone; only the whole undo puts back a run cut short. */
+  readonly partsUndoable: boolean;
 }
 
 /**
@@ -96,6 +99,7 @@ export function reviewOf(run: RunList | null, marks: AcceptMarks | undefined): R
     created: run.created,
     pending,
     open: run.state === 'interrupted' || (run.state === 'applied' && pending > 0),
+    partsUndoable: run.state === 'applied',
   };
 }
 
@@ -191,4 +195,25 @@ function listed(names: readonly string[]): string {
   return names.length < 2
     ? (names[0] ?? '')
     : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/**
+ * The check an Undo runs first, in the same turn of the queue: the last run must still be the
+ * one its button was shown for, since `undo --file` acts on whichever run is last.
+ *
+ * @param runId the run the button belongs to
+ */
+export function sameRun(runId: string): {
+  command: 'undo';
+  args: string[];
+  accept: (outcome: HostOutcome) => string | null;
+} {
+  return {
+    command: 'undo',
+    args: ['--list'],
+    accept: (outcome) =>
+      outcome.kind === 'result' && (outcome.result as UndoResult).run?.id === runId
+        ? null
+        : `The last run is no longer run ${runId}, which this button was for, so nothing was undone. The review is read again.`,
+  };
 }

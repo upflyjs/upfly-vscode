@@ -106,6 +106,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   let quietly: vscode.WorkspaceFolder | null = null;
   const refreshes = new Map<string, NodeJS.Timeout>();
   let active = 0;
+  /** Jobs the person asked for that are queued and not started yet. */
+  let waiting = 0;
   const refused: string[] = [];
 
   /** The Node.js and CLI to run, chosen once and kept, or the message saying what is missing. */
@@ -148,7 +150,12 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       refresh(folder);
     }
     active += 1;
-    const next = queue.then(job, job).finally(() => {
+    if (!quiet) waiting += 1;
+    const started = (): Promise<T> => {
+      if (!quiet) waiting -= 1;
+      return job();
+    };
+    const next = queue.then(started, started).finally(() => {
       active -= 1;
     });
     queue = next.catch(() => undefined);
@@ -164,6 +171,11 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       setTimeout(() => {
         refreshes.delete(key);
         void enqueue(async () => {
+          // A job the person asked for is waiting behind this one: it goes first.
+          if (waiting > 0) {
+            refresh(folder);
+            return;
+          }
           quietly = folder;
           try {
             await auditFolder(await engine(), folder, 'reading the folder again', true);
@@ -247,6 +259,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     args: readonly string[],
     viewId: string | undefined,
     label: string,
+    signal?: AbortSignal,
   ): Promise<RunOutcome | { kind: 'unavailable'; message: string }> {
     if ('message' in chosen) return { kind: 'unavailable', message: chosen.message };
     const all = [...args, ...trustArgs(vscode.workspace.isTrusted)];
@@ -272,6 +285,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
           },
         );
         current = handle;
+        if (signal?.aborted) handle.cancel();
+        signal?.addEventListener('abort', () => handle.cancel(), { once: true });
         for (const resolve of started.splice(0)) resolve();
         const outcome = await handle.outcome;
         if (outcome.kind === 'crashed') {
@@ -469,9 +484,25 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   const host: Host = {
     log,
     run: (folder, command, args, options) =>
-      enqueue(async () =>
-        runIn(await engineOrSay(), folder, command, args, options.viewId, options.label),
-      ),
+      enqueue(async () => {
+        if (options.signal?.aborted) return { kind: 'cancelled' } as const;
+        const chosen = await engineOrSay();
+        const { check } = options;
+        if (check !== undefined) {
+          const checked = await runIn(
+            chosen,
+            folder,
+            check.command,
+            check.args,
+            options.viewId,
+            options.label,
+            options.signal,
+          );
+          const reason = check.accept(checked);
+          if (reason !== null) return { kind: 'unavailable', message: reason } as const;
+        }
+        return runIn(chosen, folder, command, args, options.viewId, options.label, options.signal);
+      }),
     cliVersion: () => found?.cli.version ?? '',
     refresh,
     refuse: (step, act) => {
@@ -528,6 +559,11 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         }
       }
       showAudits();
+      for (const folder of fileFolders()) {
+        if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
+          void review.show(folder, false);
+        }
+      }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => showAudits()),
   );

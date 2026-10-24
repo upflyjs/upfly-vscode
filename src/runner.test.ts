@@ -192,6 +192,14 @@ describe('startRun', () => {
     expect(await handle.outcome).toEqual({ kind: 'cancelled' });
   });
 
+  it('keeps the result when Cancel lands after the CLI has finished it', async () => {
+    const { child, handle } = start();
+    child.print(AUDIT_RESULT);
+    handle.cancel();
+    child.exit(0);
+    expect((await handle.outcome).kind).toBe('result');
+  });
+
   it('forces the process to end when it has not ended a few seconds after Cancel', () => {
     vi.useFakeTimers();
     const { child, handle } = start();

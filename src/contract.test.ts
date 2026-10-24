@@ -7,6 +7,7 @@
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -21,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
 import { auditNodes } from './audit-model.js';
 import type { AuditResult, OptimizeResult, RefsResult, UndoResult } from './contract.js';
+import { onlyPattern } from './plan-model.js';
 import { refsNodes } from './refs-model.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
 
@@ -136,6 +138,36 @@ describe('the runner on the real CLI', () => {
       expect(listedRun?.id).toBe(
         applied.kind === 'result' ? (applied.result as OptimizeResult).run?.id : undefined,
       );
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("names exactly the image chosen in --only, past gitignore's depth rule and brackets", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-only-'));
+    try {
+      const logo = readFileSync(path.join(FIXTURE, 'images', 'logo.png'));
+      for (const image of ['logo.png', 'src/assets/logo.png', 'app/blog/[slug]/og.png']) {
+        mkdirSync(path.dirname(path.join(folder, image)), { recursive: true });
+        writeFileSync(path.join(folder, image), logo);
+      }
+      writeFileSync(
+        path.join(folder, 'index.html'),
+        '<img src="logo.png">\n<img src="src/assets/logo.png">\n<img src="app/blog/[slug]/og.png">\n',
+      );
+      const named = async (image: string) => {
+        const outcome = await run({
+          command: 'optimize',
+          args: ['--only', onlyPattern(image)],
+          cwd: folder,
+        });
+        return outcome.kind === 'result' ? (outcome.result as OptimizeResult).only : null;
+      };
+      expect(await named('logo.png')).toEqual({ images: ['logo.png'], unmatched: [] });
+      expect(await named('app/blog/[slug]/og.png')).toEqual({
+        images: ['app/blog/[slug]/og.png'],
+        unmatched: [],
+      });
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

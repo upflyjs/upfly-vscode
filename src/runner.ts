@@ -97,7 +97,10 @@ export function startRun(
   const finish = (value: RunOutcome): void => {
     if (settled) return;
     settled = true;
-    resolveOutcome(cancelled ? { kind: 'cancelled' } : value);
+    // A Cancel that arrives after the CLI printed its answer and exited with its code ended
+    // nothing: an apply that wrote and committed did happen.
+    const completed = value.kind === 'result' || value.kind === 'stopped';
+    resolveOutcome(cancelled && !completed ? { kind: 'cancelled' } : value);
   };
 
   let last: ResultLine | ErrorLine | null = null;

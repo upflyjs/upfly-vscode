@@ -365,4 +365,21 @@ describe('changing files through the Upfly extension', function () {
       /Only 0 of 12 root-relative references resolved, so Upfly cannot tell/,
     );
   });
+
+  it('stops only its own plan on Cancel, never starting it, and leaves the audit before it alone', async () => {
+    const audit = vscode.commands.executeCommand('upfly.auditWorkspace');
+    await api.nextRunStarted();
+    const planning = vscode.commands.executeCommand('upfly.optimizeWorkspace', plain.uri);
+    for (let tries = 0; tries < 100 && api.plan(plain.uri)?.phase !== 'planning'; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await vscode.commands.executeCommand('upfly.planCancel', planUri);
+    const [audited, planned] = await Promise.all([audit, planning]);
+    assert.deepEqual(
+      audited.map((/** @type {any} */ outcome) => outcome.kind),
+      ['result', 'result'],
+    );
+    assert.equal(planned.phase, 'stopped');
+    assert.match(planned.text, /Upfly made no plan: the run was cancelled\./);
+  });
 });

@@ -153,6 +153,11 @@
         "command": "upfly.review.open",
         "title": "Open",
         "category": "Upfly"
+      },
+      {
+        "command": "upfly.planCancel",
+        "title": "Cancel this plan",
+        "category": "Upfly"
       }
     ],
     "viewsContainers": {
@@ -343,6 +348,10 @@
         {
           "command": "upfly.review.undoRun",
           "when": "upfly.reviewing"
+        },
+        {
+          "command": "upfly.planCancel",
+          "when": "false"
         }
       ],
       "editor/title": [

@@ -73,6 +73,19 @@ const LONG_LINE = 160;
 const CONTEXT = 40;
 
 /**
+ * The `--only` pattern that names one image and no other. The CLI reads `--only` as a
+ * gitignore pattern: a name alone matches at any depth and brackets are a character class,
+ * so the path is anchored at the project and each character gitignore gives a meaning is
+ * escaped, the spaces at its end included.
+ *
+ * @param image the image, as a path inside the project with `/`
+ */
+export function onlyPattern(image: string): string {
+  const escaped = image.replace(/[\\*?[\]]/g, (character) => `\\${character}`);
+  return `/${escaped.replace(/ +$/, (spaces) => '\\ '.repeat(spaces.length))}`;
+}
+
+/**
  * The hash the CLI records for a file's text: SHA-256 of the text as UTF-8, in hexadecimal.
  *
  * @param text the file's text

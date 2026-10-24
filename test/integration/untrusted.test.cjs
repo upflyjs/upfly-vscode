@@ -81,6 +81,10 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.equal(api.refusals().length, before + 1);
   });
 
+  it('does not read the last run there, since listing it starts git in the folder', () => {
+    assert.match(String(api.review(folder(1).uri)?.error), /^This workspace is not trusted/);
+  });
+
   it('never ran the config', () => {
     assert.equal(existsSync(String(process.env.UPFLY_MARK)), false);
   });

@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import type { UndoResult } from './contract.js';
 import { plural } from './format.js';
 import type { Host, HostOutcome } from './host.js';
-import { nextStep } from './refusals.js';
+import { type StepAction, nextStep } from './refusals.js';
 import {
   type AcceptMarks,
   type Review,
@@ -22,6 +22,7 @@ import {
   beforeDocument,
   beforeText,
   reviewOf,
+  sameRun,
   undoneText,
 } from './review-model.js';
 import { UNTRUSTED_WRITE } from './trust.js';
@@ -123,6 +124,14 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
   /** Reads the folder's last run from the CLI and shows its review. */
   async function show(folder: vscode.WorkspaceFolder, reveal: boolean): Promise<void> {
     const entry = entryFor(folder);
+    // Listing the run asks git about the folder, and git follows the folder's own settings,
+    // which in a folder nobody trusted can name a program to run.
+    if (!vscode.workspace.isTrusted) {
+      entry.review = null;
+      entry.error = UNTRUSTED_REVIEW;
+      changedUi();
+      return;
+    }
     const outcome = await host.run(folder, 'undo', ['--list'], { label: 'reading the last run' });
     if (outcome.kind === 'result') {
       entry.run = (outcome.result as UndoResult).run ?? null;
@@ -228,7 +237,11 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
       host.refuse({ message, next: null, actions: [] }, () => undefined);
       return { kind: 'unsaved' };
     }
-    const outcome = await host.run(entry.folder, 'undo', args, { label: what.toLowerCase() });
+    const runId = entry.review?.runId;
+    const outcome = await host.run(entry.folder, 'undo', args, {
+      label: what.toLowerCase(),
+      ...(runId === undefined ? {} : { check: sameRun(runId) }),
+    });
     if (outcome.kind === 'result') {
       const result = outcome.result as UndoResult;
       entry.last = undoneText(result, what);
@@ -236,10 +249,9 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
     } else {
       entry.last = `${what} was refused. ${describe(outcome, 'undo')}`;
       if (outcome.kind === 'stopped') {
-        host.refuse(nextStep(outcome.error, 'undo'), (kind) => {
-          if (kind === 'trust') void vscode.commands.executeCommand('workbench.trust.manage');
-          if (kind === 'output') host.log.show();
-        });
+        host.refuse(nextStep(outcome.error, 'undo'), (kind) =>
+          takeStep(kind, () => undo(entry, args, what, files), entry.folder.uri),
+        );
       }
     }
     await show(entry.folder, false);
@@ -250,6 +262,29 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
         ? { reason: outcome.error.reason }
         : {}),
     };
+  }
+
+  /** Does what a button beside a refused undo says. */
+  function takeStep(kind: StepAction['kind'], retry: () => unknown, folder: vscode.Uri): void {
+    switch (kind) {
+      case 'trust':
+        void vscode.commands.executeCommand('workbench.trust.manage');
+        return;
+      case 'scm':
+        void vscode.commands.executeCommand('workbench.view.scm');
+        return;
+      case 'output':
+        host.log.show();
+        return;
+      case 'retry':
+        void retry();
+        return;
+      case 'undo-run':
+        void commands['upfly.review.undoRun']?.(folder);
+        return;
+      default:
+        return;
+    }
   }
 
   const fileLines = (entry: FolderReview, file: string): ReviewLine[] => [
@@ -430,7 +465,7 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
         return row;
       }
       case 'file':
-        return fileRow(folderUri, item.file);
+        return fileRow(folderUri, item.file, review?.partsUndoable !== false);
       case 'line': {
         const { line } = item;
         const row = new vscode.TreeItem(
@@ -445,7 +480,10 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
           title: 'Open',
           arguments: [folderUri, line.file, line.line],
         };
-        row.contextValue = `upfly.reviewLine.${line.state}`;
+        row.contextValue =
+          review?.partsUndoable === false
+            ? 'upfly.reviewLine.interrupted'
+            : `upfly.reviewLine.${line.state}`;
         return row;
       }
       case 'originals': {
@@ -461,7 +499,7 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
         return row;
       }
       case 'original':
-        return originalRow(item.original);
+        return originalRow(item.original, review?.partsUndoable !== false);
     }
   }
 
@@ -490,6 +528,15 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
       const top = new vscode.Range(0, 0, 0, 0);
       const lens = (range: vscode.Range, title: string, command: string, ...args: unknown[]) =>
         new vscode.CodeLens(range, { title, command, arguments: [folderUri, ...args] });
+      if (entry.review?.partsUndoable === false) {
+        return [
+          new vscode.CodeLens(top, {
+            title: `Upfly: run ${entry.review.runId} stopped part way; only undoing the whole run puts this file back`,
+            command: 'upfly.review.show',
+          }),
+          lens(top, 'Undo the whole run', 'upfly.review.undoRun'),
+        ];
+      }
       const lensList: vscode.CodeLens[] = [
         new vscode.CodeLens(top, {
           title: file.changedSince
@@ -527,7 +574,9 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
             const index = (line.line as number) - 1;
             return {
               range: editor.document.lineAt(index).range,
-              hoverMessage: new vscode.MarkdownString().appendText(lineTooltip(found?.entry, line)),
+              hoverMessage: new vscode.MarkdownString().appendText(
+                lineTooltip(found?.entry, line, editor.document.lineAt(index).text),
+              ),
               renderOptions: {
                 after: {
                   contentText: `   was ${[...new Set(line.paths.map((entry) => entry.before))].join(', ')}`,
@@ -542,8 +591,9 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
     }
   }
 
-  function lineTooltip(entry: FolderReview | undefined, line: ReviewLine): string {
-    const now = entry === undefined ? null : lineNow(entry.folder, line);
+  /** A line's state, and its text before and after; `text` is the line now, when the caller has it. */
+  function lineTooltip(entry: FolderReview | undefined, line: ReviewLine, text?: string): string {
+    const now = text ?? (entry === undefined ? null : lineNow(entry.folder, line));
     const before = now === null || line.state === 'undone' ? null : beforeText(now, line.paths);
     const words: Record<ReviewLine['state'], string> = {
       pending: 'Waiting for Accept or Undo.',
@@ -621,7 +671,7 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
 }
 
 /** A file's row in the Review list: how many of its changes wait, or why none can be undone. */
-function fileRow(folderUri: vscode.Uri, file: ReviewFile): vscode.TreeItem {
+function fileRow(folderUri: vscode.Uri, file: ReviewFile, undoable: boolean): vscode.TreeItem {
   const waiting = file.lines.filter(
     (line) => line.state === 'pending' || line.state === 'changed',
   ).length;
@@ -637,7 +687,10 @@ function fileRow(folderUri: vscode.Uri, file: ReviewFile): vscode.TreeItem {
     title: 'Open',
     arguments: [folderUri, file.path, null],
   };
-  if (file.changedSince) {
+  if (!undoable) {
+    row.description = 'the run stopped part way: only Undo all puts it back';
+    row.contextValue = 'upfly.reviewFile.interrupted';
+  } else if (file.changedSince) {
     row.description = 'changed since the run: Undo is unavailable here';
     row.tooltip =
       "Something other than the run changed this file since, so Upfly cannot undo its lines, or the whole run, until the file holds what the run left again. Accept keeps the run's changes.";
@@ -653,7 +706,7 @@ function fileRow(folderUri: vscode.Uri, file: ReviewFile): vscode.TreeItem {
 }
 
 /** A removed original's row: removed, moved, back, or replaced by another file since. */
-function originalRow(original: Review['originals'][number]): vscode.TreeItem {
+function originalRow(original: Review['originals'][number], undoable: boolean): vscode.TreeItem {
   const row = new vscode.TreeItem(original.path, vscode.TreeItemCollapsibleState.None);
   row.iconPath = new vscode.ThemeIcon(original.back ? 'check' : 'trash');
   row.contextValue = 'upfly.reviewOriginal.done';
@@ -662,7 +715,7 @@ function originalRow(original: Review['originals'][number]): vscode.TreeItem {
     row.description = 'another file is there now: cannot be brought back';
   } else {
     row.description = original.movedTo === null ? 'removed' : `moved to ${original.movedTo}`;
-    row.contextValue = 'upfly.reviewOriginal';
+    if (undoable) row.contextValue = 'upfly.reviewOriginal';
   }
   return row;
 }
@@ -685,6 +738,10 @@ function rowTarget(item: ReviewItem): {
       return { entry: item.entry, item };
   }
 }
+
+/** Why the review reads nothing in a workspace VS Code does not trust. */
+const UNTRUSTED_REVIEW =
+  'This workspace is not trusted, so Upfly does not read the last run in it. Trust the workspace to review it.';
 
 const STATE_WORDS: Record<ReviewLine['state'], string> = {
   pending: '',

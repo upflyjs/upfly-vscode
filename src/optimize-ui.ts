@@ -11,7 +11,13 @@ import path from 'node:path';
 import * as vscode from 'vscode';
 import type { OptimizeResult, Plan } from './contract.js';
 import type { Host, HostOutcome } from './host.js';
-import { type PlanScope, renderPlan, servedOriginals, textHash } from './plan-model.js';
+import {
+  type PlanScope,
+  onlyPattern,
+  renderPlan,
+  servedOriginals,
+  textHash,
+} from './plan-model.js';
 import { type StepAction, nextStep } from './refusals.js';
 import { UNTRUSTED_WRITE } from './trust.js';
 
@@ -40,6 +46,8 @@ interface PlanState {
   /** Buttons for the last refusal. */
   actions: readonly StepAction[];
   runId: string | null;
+  /** Stops this plan's own run, whether it is running or still waiting in the queue. */
+  abort: AbortController | null;
 }
 
 /** What a plan command gives back: read by the extension's tests, not a public API. */
@@ -118,12 +126,24 @@ export function registerOptimize(
   });
 
   async function plan(state: PlanState, open: boolean): Promise<PlanOutcome> {
-    plans.set(state.folder.uri.toString(), state);
+    const key = state.folder.uri.toString();
+    const earlier = plans.get(key);
+    // An apply in progress writes its result into its plan, which a new plan would replace.
+    if (earlier?.phase === 'applying') {
+      void vscode.window.showInformationMessage(
+        'Upfly is applying a plan in this folder. Plan again once it has finished.',
+      );
+      return outcomeOf(earlier);
+    }
+    earlier?.abort?.abort();
+    plans.set(key, state);
+    state.abort = new AbortController();
     state.phase = 'planning';
     state.banner = ['Planning: Upfly is reading the folder. Nothing is changed.'];
     await show(state, open);
     const outcome = await host.run(state.folder, 'optimize', planArgs(state), {
       label: 'planning',
+      signal: state.abort.signal,
     });
     state.when = new Date();
     if (outcome.kind === 'result') {
@@ -193,8 +213,10 @@ export function registerOptimize(
     state.phase = 'applying';
     state.banner = ['Applying: Upfly is converting the images and rewriting the references.'];
     await show(state, false);
+    state.abort = new AbortController();
     const outcome = await host.run(state.folder, 'optimize', applyArgs(state), {
       label: 'applying the plan',
+      signal: state.abort.signal,
     });
     if (outcome.kind === 'result') {
       const result = outcome.result as OptimizeResult;
@@ -307,10 +329,18 @@ export function registerOptimize(
           : choosePublic(state, target);
       case 'init':
         return writeConfig(state);
-      case 'open-config':
-        return vscode.window.showTextDocument(
-          vscode.Uri.joinPath(state.folder.uri, 'upfly.config.json'),
+      case 'open-config': {
+        const [config] = await vscode.workspace.findFiles(
+          new vscode.RelativePattern(state.folder, 'upfly.config.*'),
+          null,
+          1,
         );
+        if (config === undefined) {
+          void vscode.window.showInformationMessage('No Upfly config is in this folder now.');
+          return undefined;
+        }
+        return vscode.window.showTextDocument(config);
+      }
       case 'scm':
         return vscode.commands.executeCommand('workbench.view.scm');
       case 'trust':
@@ -434,6 +464,9 @@ export function registerOptimize(
         : again(target, { keepOriginals: !state.keepOriginals });
     }),
     vscode.commands.registerCommand('upfly.planAction', act),
+    vscode.commands.registerCommand('upfly.planCancel', (target?: unknown) => {
+      stateOf(target)?.abort?.abort();
+    }),
   );
 
   return (folder) => {
@@ -448,7 +481,7 @@ function topButtons(state: PlanState): [string, string, ...unknown[]][] {
   switch (state.phase) {
     case 'planning':
     case 'applying':
-      return [['Cancel', 'upfly.cancel']];
+      return [['Cancel', 'upfly.planCancel']];
     case 'applied':
       return [['Show the review', 'upfly.review.show']];
     case 'stopped':
@@ -490,6 +523,7 @@ function fresh(folder: vscode.WorkspaceFolder, scope: PlanScope): PlanState {
     banner: [],
     actions: [],
     runId: null,
+    abort: null,
   };
 }
 
@@ -507,7 +541,7 @@ function shownResult(state: PlanState): OptimizeResult {
 function planArgs(state: PlanState): string[] {
   return [
     ...(state.scope.kind === 'images'
-      ? state.scope.images.flatMap((image) => ['--only', image])
+      ? state.scope.images.flatMap((image) => ['--only', onlyPattern(image)])
       : []),
     ...(state.keepOriginals ? ['--keep-originals'] : []),
     ...(state.publicDir === null ? [] : ['--public', state.publicDir]),

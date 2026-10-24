@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Conversion, OptimizeResult, Rewrite } from './contract.js';
 import {
   type PlanView,
+  onlyPattern,
   planSummary,
   renderPlan,
   rewrittenLines,
@@ -85,6 +86,20 @@ function view(planned: OptimizeResult, extra: Partial<PlanView> = {}): PlanView 
     ...extra,
   };
 }
+
+describe('onlyPattern', () => {
+  it('anchors a path at the project, so a name alone matches no image deeper down', () => {
+    expect(onlyPattern('logo.png')).toBe('/logo.png');
+  });
+
+  it("escapes the characters gitignore patterns give a meaning, such as a route's brackets", () => {
+    expect(onlyPattern('app/blog/[slug]/og*?.png')).toBe('/app/blog/\\[slug\\]/og\\*\\?.png');
+  });
+
+  it('escapes a backslash, and the spaces at the end that gitignore would drop', () => {
+    expect(onlyPattern('a\\b.png  ')).toBe('/a\\\\b.png\\ \\ ');
+  });
+});
 
 describe('textHash', () => {
   it('is the SHA-256 of the text as UTF-8, in hexadecimal, as the CLI hashes a file', () => {
