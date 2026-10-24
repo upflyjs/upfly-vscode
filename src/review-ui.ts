@@ -22,6 +22,7 @@ import {
   beforeDocument,
   beforeText,
   reviewOf,
+  undoneText,
 } from './review-model.js';
 import { UNTRUSTED_WRITE } from './trust.js';
 
@@ -724,18 +725,4 @@ function lineNow(folder: vscode.WorkspaceFolder, line: ReviewLine): string | nul
   } catch {
     return null;
   }
-}
-
-/** What an undo put back, in words, from its result. */
-export function undoneText(result: UndoResult, what: string): string {
-  const undone = result.undone;
-  if (undone === null) return result.notes[0] ?? `${what}: there was nothing to undo.`;
-  const back =
-    undone.restored.length === 0
-      ? ''
-      : ` ${undone.restored.join(', ')} ${undone.restored.length === 1 ? 'is' : 'are'} back.`;
-  const removed =
-    undone.removed.length === 0 ? '' : ` Removed again: ${undone.removed.join(', ')}.`;
-  const notes = result.notes.length === 0 ? '' : ` ${result.notes.join(' ')}`;
-  return `${what.replace(/^Undo of/, 'Undid').replace(/^Bringing back/, 'Brought back')}.${back}${removed}${notes}`;
 }

@@ -5,7 +5,7 @@
  * mark for any other run counts for nothing, because the last run is then another one.
  */
 
-import type { RunFile, RunList, RunPath } from './contract.js';
+import type { RunFile, RunList, RunPath, UndoResult } from './contract.js';
 
 /**
  * Where one changed line stands: waiting for Accept or Undo, accepted, undone, or in a file
@@ -161,4 +161,34 @@ export function beforeDocument(text: string, file: RunFile): string {
     if (before !== null) lines[index] = carriage ? `${before}\r` : before;
   }
   return lines.join('\n');
+}
+
+/**
+ * What an undo put back, in words, from its result: the part undone, the originals back, the
+ * converted files a whole undo removed, and the CLI's own notes.
+ *
+ * @param result the undo's result line
+ * @param what what was undone, starting "Undo of" or "Bringing back"
+ */
+export function undoneText(result: UndoResult, what: string): string {
+  const undone = result.undone;
+  if (undone === null) return result.notes[0] ?? `${what}: there was nothing to undo.`;
+  const done = what.replace(/^Undo of/, 'Undid').replace(/^Bringing back/, 'Brought back');
+  const parts = [`${done}.`];
+  if (undone.restored.length > 0) {
+    parts.push(`${listed(undone.restored)} ${undone.restored.length === 1 ? 'is' : 'are'} back.`);
+  }
+  if (undone.removed.length > 0) {
+    parts.push(
+      `The converted ${undone.removed.length === 1 ? 'file' : 'files'} ${listed(undone.removed)} ${undone.removed.length === 1 ? 'is' : 'are'} gone again.`,
+    );
+  }
+  return [...parts, ...result.notes].join(' ');
+}
+
+/** Names as a list in words: `a`, `a and b`, `a, b and c`. */
+function listed(names: readonly string[]): string {
+  return names.length < 2
+    ? (names[0] ?? '')
+    : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }

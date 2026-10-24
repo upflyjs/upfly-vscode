@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { RunFile, RunList } from './contract.js';
-import { accept, beforeDocument, beforeText, lineKey, reviewOf } from './review-model.js';
+import type { RunFile, RunList, UndoResult } from './contract.js';
+import {
+  accept,
+  beforeDocument,
+  beforeText,
+  lineKey,
+  reviewOf,
+  undoneText,
+} from './review-model.js';
 
 const LOGO = { before: 'images/logo.png', after: 'images/logo.webp', image: 'images/logo.png' };
 const HERO = { before: 'images/hero.jpg', after: 'images/hero.webp', image: 'images/hero.jpg' };
@@ -127,6 +134,54 @@ describe('accept', () => {
       runId: 'r1',
       accepted: ['index.html:10'],
     });
+  });
+});
+
+describe('undoneText', () => {
+  const result = (extra: Partial<UndoResult> = {}): UndoResult => ({
+    type: 'result',
+    command: 'undo',
+    exitCode: 0,
+    undone: { id: 'r1', restored: [], reverted: ['index.html'], removed: [], moved: [] },
+    part: { file: 'index.html', line: 12 },
+    commit: null,
+    notes: [],
+    ...extra,
+  });
+
+  it('says which line was undone and which originals came back', () => {
+    const undone = {
+      id: 'r1',
+      restored: ['a.jpg', 'b.jpg'],
+      reverted: ['index.html'],
+      removed: [],
+      moved: [],
+    };
+    expect(undoneText(result({ undone }), 'Undo of line 12 of index.html')).toBe(
+      'Undid line 12 of index.html. a.jpg and b.jpg are back.',
+    );
+  });
+
+  it('says which converted files the whole undo removed', () => {
+    const undone = { id: 'r1', restored: ['a.jpg'], reverted: [], removed: ['a.webp'], moved: [] };
+    expect(undoneText(result({ undone, part: null }), 'Undo of the whole run r1')).toBe(
+      'Undid the whole run r1. a.jpg is back. The converted file a.webp is gone again.',
+    );
+  });
+
+  it("gives the CLI's note when there was nothing to undo", () => {
+    expect(
+      undoneText(
+        result({ undone: null, notes: ['Line 12 is already undone.'] }),
+        'Undo of line 12',
+      ),
+    ).toBe('Line 12 is already undone.');
+  });
+
+  it("adds the CLI's notes, such as what to do about a commit", () => {
+    expect(undoneText(result({ notes: ['The commit stays.'] }), 'Undo of index.html')).toBe(
+      'Undid index.html. The commit stays.',
+    );
   });
 });
 
