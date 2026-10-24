@@ -64,6 +64,23 @@ jobs:
           UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:untrusted; else npm run test:untrusted; fi
+      # The exit test converts copies of Upfly's own fixtures through the extension, then
+      # builds each one and checks its links, so it needs them from Upfly's repository, at
+      # the release the extension carries.
+      - name: Upfly's fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: upflyjs/upfly
+          ref: v3.2.0
+          path: upfly-fixtures
+          sparse-checkout: fixtures
+      - name: The exit test on Upfly's fixtures
+        shell: bash
+        env:
+          UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
+          UPFLY_FIXTURES: ${{ github.workspace }}/upfly-fixtures/fixtures
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:exit; else npm run test:exit; fi
 
   package:
     # One package per platform, each carrying that platform's sharp and no other, built on one
@@ -135,7 +152,9 @@ jobs:
         shell: bash
         run: |
           export UPFLY_VSIX="$(ls "$GITHUB_WORKSPACE"/vsix/*.vsix)"
-          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npx vscode-test --label package; else npx vscode-test --label package; fi
+          run() { if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$@"; else "$@"; fi; }
+          run npx vscode-test --label package
+          run npx vscode-test --label package-change
 
   installed-alpine:
     # VS Code itself does not run on Alpine Linux; the extension runs there inside a remote

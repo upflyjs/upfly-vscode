@@ -5,7 +5,15 @@
  * The tests then run on copies, so nothing they do can reach the repository.
  */
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +90,49 @@ export function changeWorkspace() {
   );
   return { root, workspaceFile };
 }
+
+/**
+ * The exit test's workspace: a copy of each of Upfly's six fixtures, from a checkout of Upfly's
+ * own repository, in a short folder under the temporary folder, each committed in a git
+ * repository of its own, with a config naming its served folder where Upfly cannot work it
+ * out. A second, untouched copy of each is made beside them, for the builds' control.
+ *
+ * @param {string} root the folder to make it in, emptied first
+ * @param {string} fixtures the `fixtures` folder of a checkout of Upfly's repository
+ * @param {Record<string, { publicDirs?: string[] }>} specs the fixtures, by name
+ * @returns {{ root: string, workspaceFile: string }}
+ */
+export function exitWorkspace(root, fixtures, specs) {
+  // The fixtures' installed dependencies stay, so that a second run need not fetch them.
+  mkdirSync(root, { recursive: true });
+  for (const entry of readdirSync(root)) {
+    if (entry !== 'deps') rmSync(path.join(root, entry), { recursive: true, force: true });
+  }
+  const names = Object.keys(specs);
+  for (const name of names) {
+    for (const copy of [path.join(root, name), path.join(root, 'untouched', name)]) {
+      cpSync(path.join(fixtures, name), copy, {
+        recursive: true,
+        filter: (source) => !NOT_COPIED.has(path.basename(source)),
+      });
+    }
+    const publicDirs = specs[name]?.publicDirs;
+    if (publicDirs !== undefined) {
+      const config = { $schema: './node_modules/upfly/schema/config.json', publicDirs };
+      writeFileSync(
+        path.join(root, name, 'upfly.config.json'),
+        `${JSON.stringify(config, null, 2)}\n`,
+      );
+    }
+    commitAll(path.join(root, name));
+  }
+  const workspaceFile = path.join(root, 'exit.code-workspace');
+  writeFileSync(workspaceFile, JSON.stringify({ folders: names.map((name) => ({ path: name })) }));
+  return { root, workspaceFile };
+}
+
+/** What a fixture copy leaves out: dependencies, build outputs and caches. */
+const NOT_COPIED = new Set(['node_modules', 'dist', '_site', '.next', 'out', '.astro', '.cache']);
 
 /**
  * Commits every file of a folder, starting a git repository there first, with an identity of
