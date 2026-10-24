@@ -372,5 +372,38 @@ export interface RefsResult {
       };
 }
 
+/** What `upfly init --agents` did with one file it points the coding agents at. */
+export interface AgentFile {
+  /** Relative to the project. */
+  readonly file: string;
+  readonly action: 'created' | 'added' | 'updated' | 'unchanged' | 'skipped';
+  /** Why a file was skipped. */
+  readonly why?: string;
+}
+
+/** The last line of `upfly init --json`. */
+export interface InitResult {
+  readonly type: 'result';
+  readonly command: 'init';
+  readonly exitCode: 0;
+  /** The config written, or null when one was already there and was kept. */
+  readonly file: 'upfly.config.json' | null;
+  /** What the config written holds. */
+  readonly config: Readonly<Record<string, unknown>> | null;
+  /** Why each setting was written, or left out. */
+  readonly reasons: readonly {
+    readonly setting: string;
+    readonly value: string | null;
+    readonly why: string;
+  }[];
+  /** Folders Upfly could not choose between, none of them written. */
+  readonly ties?: readonly { readonly dir: string; readonly candidates: readonly string[] }[];
+  /** With `--agents`: each instruction file and copy of the Upfly skill, and what was done. */
+  readonly agents?: {
+    readonly instructions: readonly AgentFile[];
+    readonly skills: readonly AgentFile[];
+  };
+}
+
 /** A command's result line. */
-export type ResultLine = AuditResult | RefsResult | OptimizeResult | UndoResult;
+export type ResultLine = AuditResult | RefsResult | OptimizeResult | UndoResult | InitResult;

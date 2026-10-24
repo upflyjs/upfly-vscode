@@ -85,6 +85,22 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.match(String(api.review(folder(1).uri)?.error), /^This workspace is not trusted/);
   });
 
+  it('registers no MCP server, though a folder there holds an Upfly config', async () => {
+    assert.deepEqual(await api.mcpServers(), []);
+  });
+
+  it('does not point coding agents at Upfly there, and says why', async () => {
+    const before = api.refusals().length;
+    const outcome = await vscode.commands.executeCommand('upfly.pointAgents', folder(1).uri);
+    assert.equal(outcome, undefined);
+    assert.equal(existsSync(path.join(folder(1).uri.fsPath, 'AGENTS.md')), false);
+    assert.match(
+      String(api.refusals().at(-1)),
+      /^This workspace is not trusted, so Upfly changes no file in it\./,
+    );
+    assert.equal(api.refusals().length, before + 1);
+  });
+
   it('never ran the config', () => {
     assert.equal(existsSync(String(process.env.UPFLY_MARK)), false);
   });

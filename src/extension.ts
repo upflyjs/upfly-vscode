@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as vscode from 'vscode';
+import { type McpServer, registerAgents } from './agents-ui.js';
 import { type TreeNode, auditNodes } from './audit-model.js';
 import {
   type BundledCli,
@@ -73,6 +74,10 @@ export interface UpflyExports {
   refusals(): readonly string[];
   /** Settles once no run is queued or running and no re-audit is waiting. */
   idle(): Promise<void>;
+  /** The MCP servers the editor is given now. */
+  mcpServers(): Promise<readonly McpServer[]>;
+  /** The labels of the MCP servers the editor has started. */
+  mcpStarted(): readonly string[];
 }
 
 /**
@@ -504,6 +509,10 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         return runIn(chosen, folder, command, args, options.viewId, options.label, options.signal);
       }),
     cliVersion: () => found?.cli.version ?? '',
+    engine: async () => {
+      const chosen = await engine();
+      return 'message' in chosen ? chosen : { node: chosen.node };
+    },
     refresh,
     refuse: (step, act) => {
       const text = step.next === null ? step.message : `${step.message} ${step.next}`;
@@ -519,6 +528,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   };
   const review = registerReview(context, host);
   const planOf = registerOptimize(context, host, review);
+  const agents = registerAgents(context, host);
   for (const folder of fileFolders()) {
     if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
       void review.show(folder, false);
@@ -588,6 +598,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     },
+    mcpServers: () => agents.servers(),
+    mcpStarted: () => agents.started(),
   };
 }
 

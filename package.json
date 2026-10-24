@@ -28,7 +28,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In a workspace you have not trusted, Upfly runs none of the project's code and changes no file: a folder with an upfly.config.ts or upfly.config.js is not read, and Optimize and Undo do nothing until you trust the workspace."
+      "description": "In a workspace you have not trusted, Upfly runs none of the project's code and changes no file: a folder with an upfly.config.ts or upfly.config.js is not read, Optimize and Undo do nothing, and coding agents get no Upfly MCP server until you trust the workspace."
     },
     "virtualWorkspaces": {
       "supported": false,
@@ -158,6 +158,22 @@
         "command": "upfly.planCancel",
         "title": "Cancel this plan",
         "category": "Upfly"
+      },
+      {
+        "command": "upfly.pointAgents",
+        "title": "Point coding agents at Upfly",
+        "category": "Upfly"
+      },
+      {
+        "command": "upfly.copyMcpSetup",
+        "title": "Copy the MCP setup for Cursor or Windsurf",
+        "category": "Upfly"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "upfly",
+        "label": "Upfly"
       }
     ],
     "viewsContainers": {
@@ -376,7 +392,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "check": "npm run lint && npm run comments:check && npm run typecheck && npm test",
-    "test:integration": "node scripts/build.mjs && vscode-test --label extension && vscode-test --label change",
+    "test:integration": "node scripts/build.mjs && vscode-test --label extension && vscode-test --label change && vscode-test --label agents",
     "test:untrusted": "node scripts/build.mjs && node scripts/untrusted-check.mjs",
     "test:exit": "node scripts/build.mjs && vscode-test --label exit && node scripts/exit-builds.mjs"
   },
@@ -389,6 +405,7 @@
     "@vscode/vsce": "4.0.0",
     "ajv": "8.20.0",
     "esbuild": "0.25.12",
+    "jsonc-parser": "3.3.1",
     "mocha": "11.8.0",
     "typescript": "5.9.3",
     "upfly-core": "3.2.0",

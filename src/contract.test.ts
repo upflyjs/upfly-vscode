@@ -20,8 +20,15 @@ import { fileURLToPath } from 'node:url';
 import { Ajv } from 'ajv';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
+import { agentsReport } from './agents.js';
 import { auditNodes } from './audit-model.js';
-import type { AuditResult, OptimizeResult, RefsResult, UndoResult } from './contract.js';
+import type {
+  AuditResult,
+  InitResult,
+  OptimizeResult,
+  RefsResult,
+  UndoResult,
+} from './contract.js';
 import { onlyPattern } from './plan-model.js';
 import { refsNodes } from './refs-model.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
@@ -137,6 +144,32 @@ describe('the runner on the real CLI', () => {
       const listedRun = listed.kind === 'result' ? (listed.result as UndoResult).run : null;
       expect(listedRun?.id).toBe(
         applied.kind === 'result' ? (applied.result as OptimizeResult).run?.id : undefined,
+      );
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("reads init --agents's result as its schema describes it, each file it lists written", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-init-'));
+    try {
+      cpSync(FIXTURE, folder, { recursive: true });
+      const outcome = await run({ command: 'init', args: ['--agents'], cwd: folder });
+      expect(outcome.kind).toBe('result');
+      if (outcome.kind !== 'result') return;
+      const result = outcome.result as InitResult;
+      const files = [...(result.agents?.instructions ?? []), ...(result.agents?.skills ?? [])];
+      expect([result.file, files.map((file) => [file.file, file.action])]).toEqual([
+        'upfly.config.json',
+        [
+          ['AGENTS.md', 'created'],
+          ['.agents/skills/upfly/SKILL.md', 'created'],
+          ['.claude/skills/upfly/SKILL.md', 'created'],
+        ],
+      ]);
+      for (const file of files) expect(existsSync(path.join(folder, file.file))).toBe(true);
+      expect(agentsReport(result, { folder: 'site', kept: null })).toContain(
+        '  AGENTS.md  created, with the Upfly block',
       );
     } finally {
       rmSync(folder, { recursive: true, force: true });

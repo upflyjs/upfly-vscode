@@ -131,6 +131,73 @@ export function exitWorkspace(root, fixtures, specs) {
   return { root, workspaceFile };
 }
 
+/** The `$schema` line `upfly init` writes, which marks a JSON config as Upfly 3's. */
+const UPFLY_3 = './node_modules/upfly/schema/config.json';
+
+/** A config of the old Upfly extension, as its "Create Config File" wrote one. */
+export const OLD_CONFIG = `{
+  // Auto-convert images dropped into watched folders
+  "enabled": true,
+
+  // Watched folders, each with its own format and quality
+  "watchTargets": [
+    { "path": "images", "format": "webp", "quality": 80 }
+  ],
+  "storageMode": "in-place",
+  "inPlaceKeepOriginal": true,
+  "outputDirectory": "./converted",
+  "originalDirectory": "./originals",
+  "maxFileSize": 20000000,
+  "cloudUpload": {
+    "enabled": false,
+    "watchTargets": ["images"],
+    "provider": "cloudinary",
+    "config": { "cloudName": "\${env:CLOUDINARY_CLOUD_NAME}" }
+  }
+}
+`;
+
+/**
+ * The workspace of the coding agents' tests: copies of plain-html with an Upfly 3 config, with
+ * a watched folder, with no config, with the old extension's config, and with a config and a
+ * `.vscode/mcp.json` that already has a server named upfly; and a profile folder of its own,
+ * as VS Code has on a fresh install.
+ *
+ * @returns {{ root: string, workspaceFile: string, userData: string }}
+ */
+export function agentsWorkspace() {
+  const json = (/** @type {object} */ value) => `${JSON.stringify(value, null, 2)}\n`;
+  const names = ['configured', 'watched', 'bare', 'old', 'listed'];
+  const root = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-agents-'));
+  /** @type {Record<string, Record<string, string>>} */
+  const extra = {
+    configured: { 'upfly.config.json': json({ $schema: UPFLY_3, publicDirs: ['.'] }) },
+    watched: { 'upfly.config.json': json({ $schema: UPFLY_3, watch: { folders: ['images'] } }) },
+    bare: {},
+    old: { 'upfly.config.json': OLD_CONFIG },
+    // A server named upfly that serves nothing, so a test's VS Code never fetches one.
+    listed: {
+      'upfly.config.json': json({ $schema: UPFLY_3, publicDirs: ['.'] }),
+      '.vscode/mcp.json': json({
+        servers: { upfly: { type: 'stdio', command: 'node', args: ['--version'] } },
+      }),
+    },
+  };
+  for (const name of names) {
+    const copy = path.join(root, name);
+    cpSync(path.join(FIXTURES, 'plain-html'), copy, { recursive: true });
+    for (const [file, text] of Object.entries(extra[name] ?? {})) {
+      mkdirSync(path.dirname(path.join(copy, file)), { recursive: true });
+      writeFileSync(path.join(copy, file), text);
+    }
+  }
+  const workspaceFile = path.join(root, 'agents.code-workspace');
+  writeFileSync(workspaceFile, JSON.stringify({ folders: names.map((name) => ({ path: name })) }));
+  const userData = path.join(root, 'user-data');
+  mkdirSync(path.join(userData, 'User'), { recursive: true });
+  return { root, workspaceFile, userData };
+}
+
 /** What a fixture copy leaves out: dependencies, build outputs and caches. */
 const NOT_COPIED = new Set(['node_modules', 'dist', '_site', '.next', 'out', '.astro', '.cache']);
 

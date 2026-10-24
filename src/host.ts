@@ -5,6 +5,7 @@
 
 import type * as vscode from 'vscode';
 import type { CommandName } from './contract.js';
+import type { NodeRuntime } from './node-runtime.js';
 import type { NextStep } from './refusals.js';
 import type { RunOutcome } from './runner.js';
 
@@ -45,6 +46,8 @@ export interface Host {
   ): Promise<HostOutcome>;
   /** The version of the CLI the extension carries, once it has been found. */
   cliVersion(): string;
+  /** The Node.js that runs the CLI, chosen once, or the message saying what is missing. */
+  engine(): Promise<{ readonly node: NodeRuntime } | { readonly message: string }>;
   /** Audits a folder again soon, quietly, so the views and the Problems panel follow a write. */
   refresh(folder: vscode.WorkspaceFolder): void;
   /** Shows a refusal of something the person asked for, with its next step and buttons. */

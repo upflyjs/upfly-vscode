@@ -1,8 +1,9 @@
 // @ts-check
 /**
  * The integration tests' configuration for `vscode-test`. `extension` runs the read-only tests
- * on the extension from this repository, and `change` the tests that change files, each on a
- * workspace of its own; `exit` the exit test on copies of Upfly's own fixtures, which
+ * on the extension from this repository, `change` the tests that change files, and `agents`
+ * those of coding agents, each on a workspace of its own; `exit` the exit test on copies of
+ * Upfly's own fixtures, which
  * UPFLY_FIXTURES names when no checkout of Upfly sits beside this one. `package` and `package-change` run the same tests on a built package,
  * installed into the test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the
  * VS Code version (the current release by default), and UPFLY_VSCODE_EXECUTABLE an
@@ -15,6 +16,7 @@ import { defineConfig } from '@vscode/test-cli';
 import { FIXTURES } from './test/integration/site-check.mjs';
 import {
   EDITOR_VARIABLE,
+  agentsWorkspace,
   changeWorkspace,
   exitWorkspace,
   fixtureWorkspace,
@@ -30,6 +32,7 @@ const read = fixtureWorkspace(['eleventy', 'plain-html']).workspaceFile;
 const change = label.endsWith('change') ? changeWorkspace().workspaceFile : read;
 const exit =
   label === 'exit' ? exitWorkspace(exitRoot(), upflyFixtures(), FIXTURES).workspaceFile : read;
+const agents = label === 'agents' ? agentsWorkspace() : null;
 const executable = process.env.UPFLY_VSCODE_EXECUTABLE;
 const vsix = process.env.UPFLY_VSIX;
 
@@ -79,6 +82,17 @@ export default defineConfig([
     files: 'test/integration/change.test.cjs',
     workspaceFolder: change,
     launchArgs: ['--disable-extensions'],
+  },
+  {
+    ...common,
+    label: 'agents',
+    files: 'test/integration/agents.test.cjs',
+    workspaceFolder: agents?.workspaceFile ?? read,
+    // A profile of its own, as on a fresh install, so no earlier run's state is there.
+    launchArgs: [
+      '--disable-extensions',
+      ...(agents === null ? [] : [`--user-data-dir=${agents.userData}`]),
+    ],
   },
   {
     ...common,

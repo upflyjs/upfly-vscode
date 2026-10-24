@@ -21,6 +21,9 @@ await build({
   format: 'cjs',
   // The Node.js inside VS Code 1.101, the oldest version the extension supports.
   target: 'node22.15',
+  // jsonc-parser's main build is UMD, whose own requires esbuild cannot follow; its module
+  // build is plain ESM.
+  mainFields: ['module', 'main'],
   external: ['vscode'],
   logLevel: 'warning',
 });
