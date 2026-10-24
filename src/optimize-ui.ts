@@ -383,31 +383,11 @@ export function registerOptimize(
       const state = plans.get(document.uri.query);
       if (state === undefined) return [];
       const top = new vscode.Range(0, 0, 0, 0);
-      const lens = (title: string, command: string, ...args: unknown[]) =>
-        new vscode.CodeLens(top, { title, command, arguments: [document.uri, ...args] });
+      const found = topButtons(state).map(
+        ([title, command, ...args]) =>
+          new vscode.CodeLens(top, { title, command, arguments: [document.uri, ...args] }),
+      );
       const result = state.result;
-      const found: vscode.CodeLens[] = [];
-      if (state.phase === 'planning' || state.phase === 'applying') {
-        found.push(new vscode.CodeLens(top, { title: 'Cancel', command: 'upfly.cancel' }));
-      } else if (state.phase === 'ready' && result !== null) {
-        const work = result.plan.conversions.length > 0 || result.plan.rewrites.length > 0;
-        if (work) found.push(lens('Apply this plan', 'upfly.applyPlan'));
-        if (work && state.keepOriginals) {
-          found.push(lens('Remove originals as planned', 'upfly.keepOriginals'));
-        } else if (result.plan.conversions.some((conversion) => conversion.replacesOriginal)) {
-          found.push(lens('Keep the originals', 'upfly.keepOriginals'));
-        }
-      } else if (state.phase === 'applied') {
-        found.push(
-          new vscode.CodeLens(top, { title: 'Show the review', command: 'upfly.review.show' }),
-        );
-      }
-      for (const action of state.phase === 'stopped' ? state.actions : []) {
-        found.push(lens(action.title, 'upfly.planAction', action.kind));
-      }
-      if (state.phase !== 'planning' && state.phase !== 'applying' && state.phase !== 'applied') {
-        found.push(lens('Plan again', 'upfly.planAgain'));
-      }
       const served = state.keepOriginals || result === null ? [] : servedOriginals(result.plan);
       if (state.phase === 'ready' && served.length > 0) {
         // From the text the document is about to hold: VS Code may not have read it yet.
@@ -460,6 +440,40 @@ export function registerOptimize(
     const state = plans.get(folder.toString());
     return state === undefined ? undefined : outcomeOf(state);
   };
+}
+
+/** The buttons over a plan document, each as its title, its command and what follows the document. */
+function topButtons(state: PlanState): [string, string, ...unknown[]][] {
+  const result = state.result;
+  switch (state.phase) {
+    case 'planning':
+    case 'applying':
+      return [['Cancel', 'upfly.cancel']];
+    case 'applied':
+      return [['Show the review', 'upfly.review.show']];
+    case 'stopped':
+      return [
+        ...state.actions.map((action): [string, string, ...unknown[]] => [
+          action.title,
+          'upfly.planAction',
+          action.kind,
+        ]),
+        ['Plan again', 'upfly.planAgain'],
+      ];
+    case 'ready': {
+      const buttons: [string, string, ...unknown[]][] = [];
+      const work =
+        result !== null && (result.plan.conversions.length > 0 || result.plan.rewrites.length > 0);
+      if (work) buttons.push(['Apply this plan', 'upfly.applyPlan']);
+      if (work && state.keepOriginals) {
+        buttons.push(['Remove originals as planned', 'upfly.keepOriginals']);
+      } else if (result?.plan.conversions.some((conversion) => conversion.replacesOriginal)) {
+        buttons.push(['Keep the originals', 'upfly.keepOriginals']);
+      }
+      buttons.push(['Plan again', 'upfly.planAgain']);
+      return buttons;
+    }
+  }
 }
 
 function fresh(folder: vscode.WorkspaceFolder, scope: PlanScope): PlanState {

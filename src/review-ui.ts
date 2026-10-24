@@ -165,24 +165,17 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
     const [first, file, line] = args;
     if (first instanceof vscode.Uri) {
       const entry = entries.get(first.toString());
-      return entry === undefined
-        ? undefined
-        : {
-            entry,
-            ...(typeof file === 'string' ? { file } : {}),
-            ...(typeof line === 'number' || line === null ? { line } : {}),
-          };
+      if (entry === undefined) return undefined;
+      return {
+        entry,
+        ...(typeof file === 'string' ? { file } : {}),
+        ...(typeof line === 'number' || line === null ? { line } : {}),
+      };
     }
     const item = first as ReviewItem | undefined;
-    if (item === undefined || !('entry' in item)) {
-      const only = [...entries.values()].filter((entry) => entry.review?.open === true);
-      return only.length === 1 && only[0] !== undefined ? { entry: only[0] } : undefined;
-    }
-    if (item.kind === 'file') return { entry: item.entry, item, file: item.file.path };
-    if (item.kind === 'line')
-      return { entry: item.entry, item, file: item.line.file, line: item.line.line };
-    if (item.kind === 'original') return { entry: item.entry, item, file: item.original.path };
-    return { entry: item.entry, item };
+    if (item !== undefined && 'entry' in item) return rowTarget(item);
+    const only = [...entries.values()].filter((entry) => entry.review?.open === true);
+    return only.length === 1 && only[0] !== undefined ? { entry: only[0] } : undefined;
   }
 
   async function acceptKeys(
@@ -435,37 +428,8 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
           review?.state === 'interrupted' ? 'upfly.reviewRun.interrupted' : 'upfly.reviewRun';
         return row;
       }
-      case 'file': {
-        const waiting = item.file.lines.filter(
-          (line) => line.state === 'pending' || line.state === 'changed',
-        ).length;
-        const row = new vscode.TreeItem(
-          item.file.path,
-          waiting > 0
-            ? vscode.TreeItemCollapsibleState.Expanded
-            : vscode.TreeItemCollapsibleState.Collapsed,
-        );
-        row.resourceUri = vscode.Uri.joinPath(folderUri, ...item.file.path.split('/'));
-        row.description = item.file.changedSince
-          ? 'changed since the run: Undo is unavailable here'
-          : waiting === 0
-            ? 'every change accepted or undone'
-            : `${plural(waiting, 'change')} to review`;
-        row.tooltip = item.file.changedSince
-          ? "Something other than the run changed this file since, so Upfly cannot undo its lines, or the whole run, until the file holds what the run left again. Accept keeps the run's changes."
-          : undefined;
-        row.command = {
-          command: 'upfly.review.open',
-          title: 'Open',
-          arguments: [folderUri, item.file.path, null],
-        };
-        row.contextValue = item.file.changedSince
-          ? 'upfly.reviewFile.changed'
-          : waiting > 0
-            ? 'upfly.reviewFile'
-            : 'upfly.reviewFile.done';
-        return row;
-      }
+      case 'file':
+        return fileRow(folderUri, item.file);
       case 'line': {
         const { line } = item;
         const row = new vscode.TreeItem(
@@ -495,23 +459,8 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
         row.iconPath = new vscode.ThemeIcon('file-media');
         return row;
       }
-      case 'original': {
-        const { original } = item;
-        const row = new vscode.TreeItem(original.path, vscode.TreeItemCollapsibleState.None);
-        row.description = original.back
-          ? 'back'
-          : original.changedSince
-            ? 'another file is there now: cannot be brought back'
-            : original.movedTo === null
-              ? 'removed'
-              : `moved to ${original.movedTo}`;
-        row.iconPath = new vscode.ThemeIcon(original.back ? 'check' : 'trash');
-        row.contextValue =
-          !original.back && !original.changedSince
-            ? 'upfly.reviewOriginal'
-            : 'upfly.reviewOriginal.done';
-        return row;
-      }
+      case 'original':
+        return originalRow(item.original);
     }
   }
 
@@ -668,6 +617,72 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
         : { review: entry.review, last: entry.last, error: entry.error };
     },
   };
+}
+
+/** A file's row in the Review list: how many of its changes wait, or why none can be undone. */
+function fileRow(folderUri: vscode.Uri, file: ReviewFile): vscode.TreeItem {
+  const waiting = file.lines.filter(
+    (line) => line.state === 'pending' || line.state === 'changed',
+  ).length;
+  const row = new vscode.TreeItem(
+    file.path,
+    waiting > 0
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed,
+  );
+  row.resourceUri = vscode.Uri.joinPath(folderUri, ...file.path.split('/'));
+  row.command = {
+    command: 'upfly.review.open',
+    title: 'Open',
+    arguments: [folderUri, file.path, null],
+  };
+  if (file.changedSince) {
+    row.description = 'changed since the run: Undo is unavailable here';
+    row.tooltip =
+      "Something other than the run changed this file since, so Upfly cannot undo its lines, or the whole run, until the file holds what the run left again. Accept keeps the run's changes.";
+    row.contextValue = 'upfly.reviewFile.changed';
+  } else if (waiting === 0) {
+    row.description = 'every change accepted or undone';
+    row.contextValue = 'upfly.reviewFile.done';
+  } else {
+    row.description = `${plural(waiting, 'change')} to review`;
+    row.contextValue = 'upfly.reviewFile';
+  }
+  return row;
+}
+
+/** A removed original's row: removed, moved, back, or replaced by another file since. */
+function originalRow(original: Review['originals'][number]): vscode.TreeItem {
+  const row = new vscode.TreeItem(original.path, vscode.TreeItemCollapsibleState.None);
+  row.iconPath = new vscode.ThemeIcon(original.back ? 'check' : 'trash');
+  row.contextValue = 'upfly.reviewOriginal.done';
+  if (original.back) row.description = 'back';
+  else if (original.changedSince) {
+    row.description = 'another file is there now: cannot be brought back';
+  } else {
+    row.description = original.movedTo === null ? 'removed' : `moved to ${original.movedTo}`;
+    row.contextValue = 'upfly.reviewOriginal';
+  }
+  return row;
+}
+
+/** The folder, file and line a row of the Review list stands for. */
+function rowTarget(item: ReviewItem): {
+  entry: FolderReview;
+  item: ReviewItem;
+  file?: string;
+  line?: number | null;
+} {
+  switch (item.kind) {
+    case 'file':
+      return { entry: item.entry, item, file: item.file.path };
+    case 'line':
+      return { entry: item.entry, item, file: item.line.file, line: item.line.line };
+    case 'original':
+      return { entry: item.entry, item, file: item.original.path };
+    default:
+      return { entry: item.entry, item };
+  }
 }
 
 const STATE_WORDS: Record<ReviewLine['state'], string> = {
