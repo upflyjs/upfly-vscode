@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
+const { listTools } = require('./mcp-client.cjs');
 
 const PACKAGED = process.env.UPFLY_PACKAGE === '1';
 
@@ -54,6 +55,19 @@ describe('the Upfly extension', function () {
       'upfly.cjs',
     );
     assert.equal(existsSync(carried), PACKAGED);
+  });
+
+  it("carries an MCP server that starts on the CLI's Node.js and lists Upfly's tools", async () => {
+    const engine = await api.engine();
+    const modules = PACKAGED
+      ? path.join(extension.extensionPath, 'engine', 'node_modules')
+      : path.join(extension.extensionPath, 'node_modules');
+    const { tools } = await listTools(
+      engine.node.execPath,
+      [path.join(modules, 'upfly-mcp', 'dist', 'bin.js'), folder(1).uri.fsPath],
+      { env: { ...process.env, ...engine.node.env } },
+    );
+    assert.deepEqual(tools, ['audit', 'check', 'refs', 'optimize', 'dedupe', 'move', 'undo']);
   });
 
   it("runs the CLI on the editor's own Node.js", async () => {
