@@ -4,6 +4,7 @@
  * through its JSON contract; nothing here reads a project itself.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import * as vscode from 'vscode';
@@ -15,11 +16,15 @@ import {
   versionNotice,
 } from './bundled-cli.js';
 import type { AuditResult, CommandName, ErrorLine, RefsResult } from './contract.js';
+import type { Host } from './host.js';
 import { openLocation } from './locations.js';
 import { type NodeRuntime, chooseNode, nodeOnPath, versionOf } from './node-runtime.js';
+import { type PlanOutcome, registerOptimize } from './optimize-ui.js';
+import { brokenProblems } from './problems.js';
 import { progressText } from './progress-text.js';
 import { refsNodes } from './refs-model.js';
 import { renderReport } from './report.js';
+import { type ReviewPart, registerReview } from './review-ui.js';
 import { type RunHandle, type RunOutcome, startRun } from './runner.js';
 import { NodeTree, type ViewNode, viewNodes } from './tree.js';
 import { codeConfigRefusal, trustArgs } from './trust.js';
@@ -57,6 +62,16 @@ export interface UpflyExports {
   refsRows(): readonly TreeNode[];
   /** Settles once the next run's process has started. */
   nextRunStarted(): Promise<void>;
+  /** A folder's plan document and where it stands. */
+  plan(folder: vscode.Uri): PlanOutcome | undefined;
+  /** A folder's review, as last read from the CLI. */
+  review(folder: vscode.Uri): ReturnType<ReviewPart['current']>;
+  /** Every entry Upfly put in the Problems panel. */
+  problems(): [vscode.Uri, readonly vscode.Diagnostic[]][];
+  /** Each refusal shown to the person so far, as its text. */
+  refusals(): readonly string[];
+  /** Settles once no run is queued or running and no re-audit is waiting. */
+  idle(): Promise<void>;
 }
 
 /**
@@ -85,6 +100,12 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   let queue: Promise<unknown> = Promise.resolve();
   let found: { node: NodeRuntime; cli: BundledCli } | null = null;
   const started: (() => void)[] = [];
+  const problems = vscode.languages.createDiagnosticCollection('upfly');
+  /** The folder a quiet re-audit is reading, which a run the person asks for stops. */
+  let quietly: vscode.WorkspaceFolder | null = null;
+  const refreshes = new Map<string, NodeJS.Timeout>();
+  let active = 0;
+  const refused: string[] = [];
 
   /** The Node.js and CLI to run, chosen once and kept, or the message saying what is missing. */
   async function engine(): Promise<{ node: NodeRuntime; cli: BundledCli } | { message: string }> {
@@ -115,11 +136,94 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     return found;
   }
 
-  /** Runs jobs one after another, so two commands never read the disk at once. */
-  function enqueue<T>(job: () => Promise<T>): Promise<T> {
-    const next = queue.then(job, job);
+  /**
+   * Runs jobs one after another, so two commands never read the disk at once. A job the
+   * person asked for stops a quiet re-audit that is running, which runs again after it.
+   */
+  function enqueue<T>(job: () => Promise<T>, quiet = false): Promise<T> {
+    if (!quiet && quietly !== null) {
+      const folder = quietly;
+      current?.cancel();
+      refresh(folder);
+    }
+    active += 1;
+    const next = queue.then(job, job).finally(() => {
+      active -= 1;
+    });
     queue = next.catch(() => undefined);
     return next;
+  }
+
+  /** Audits a folder again once writes have settled, so the views follow what changed. */
+  function refresh(folder: vscode.WorkspaceFolder): void {
+    const key = folder.uri.toString();
+    clearTimeout(refreshes.get(key));
+    refreshes.set(
+      key,
+      setTimeout(() => {
+        refreshes.delete(key);
+        void enqueue(async () => {
+          quietly = folder;
+          try {
+            await auditFolder(await engine(), folder, 'reading the folder again', true);
+          } finally {
+            quietly = null;
+          }
+        }, true);
+      }, 1_500),
+    );
+  }
+
+  /** One folder's audit, shown in the view, the report and the Problems panel. */
+  async function auditFolder(
+    chosen: { node: NodeRuntime; cli: BundledCli } | { message: string },
+    folder: vscode.WorkspaceFolder,
+    label: string,
+    quiet: boolean,
+  ): Promise<RunOutcome | { kind: 'unavailable'; message: string }> {
+    const key = folder.uri.toString();
+    if (!quiet) {
+      audits.set(key, { kind: 'message', text: 'Auditing...', icon: 'sync~spin' });
+      showAudits();
+    }
+    const outcome = await runIn(chosen, folder, 'audit', [], 'upfly.audit', label);
+    if (quiet && outcome.kind !== 'result') return outcome;
+    audits.set(key, auditState(outcome, folder));
+    if (outcome.kind === 'result') showProblems(folder, outcome.result as AuditResult);
+    showAudits();
+    reportChanged.fire(reportUri(folder));
+    return outcome;
+  }
+
+  /** Replaces a folder's entries in the Problems panel with its audit's broken references. */
+  function showProblems(folder: vscode.WorkspaceFolder, result: AuditResult): void {
+    const stale = [...problems]
+      .map(([uri]) => uri)
+      .filter(
+        (uri) => vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() === folder.uri.toString(),
+      );
+    for (const uri of stale) problems.delete(uri);
+    const byFile = new Map<string, vscode.Diagnostic[]>();
+    const textOf = (file: string): string | null => {
+      try {
+        return readFileSync(path.join(folder.uri.fsPath, file), 'utf8');
+      } catch {
+        return null;
+      }
+    };
+    for (const problem of brokenProblems(result.report.findings, textOf)) {
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(problem.line, problem.start, problem.line, problem.end),
+        problem.message,
+        vscode.DiagnosticSeverity.Warning,
+      );
+      diagnostic.source = 'Upfly';
+      diagnostic.code = 'broken-reference';
+      byFile.set(problem.file, [...(byFile.get(problem.file) ?? []), diagnostic]);
+    }
+    for (const [file, list] of byFile) {
+      problems.set(vscode.Uri.joinPath(folder.uri, ...file.split('/')), list);
+    }
   }
 
   /** The engine for a command, or null after saying, once, what is missing. */
@@ -140,7 +244,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     folder: vscode.WorkspaceFolder,
     command: CommandName,
     args: readonly string[],
-    viewId: string,
+    viewId: string | undefined,
     label: string,
   ): Promise<RunOutcome | { kind: 'unavailable'; message: string }> {
     if ('message' in chosen) return { kind: 'unavailable', message: chosen.message };
@@ -150,7 +254,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     status.show();
     await vscode.commands.executeCommand('setContext', 'upfly.running', true);
     try {
-      return await vscode.window.withProgress({ location: { viewId } }, async () => {
+      const location = viewId === undefined ? vscode.ProgressLocation.Window : { viewId };
+      return await vscode.window.withProgress({ location }, async () => {
         const handle = startRun(
           { node: chosen.node, cliBin: chosen.cli.bin },
           {
@@ -243,13 +348,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
           folders.length > 1
             ? `auditing ${folder.name} (${index + 1} of ${folders.length})`
             : 'auditing';
-        audits.set(key, { kind: 'message', text: 'Auditing...', icon: 'sync~spin' });
-        showAudits();
-        const outcome = await runIn(chosen, folder, 'audit', [], 'upfly.audit', label);
-        audits.set(key, auditState(outcome, folder));
-        outcomes.push(folderOutcome(folder, outcome));
-        showAudits();
-        reportChanged.fire(reportUri(folder));
+        outcomes.push(folderOutcome(folder, await auditFolder(chosen, folder, label, false)));
       }
       return outcomes;
     });
@@ -371,7 +470,41 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     },
   };
 
+  const host: Host = {
+    log,
+    run: (folder, command, args, options) =>
+      enqueue(async () =>
+        runIn(await engineOrSay(), folder, command, args, options.viewId, options.label),
+      ),
+    cliVersion: () => found?.cli.version ?? '',
+    refresh,
+    refuse: (step, act) => {
+      const text = step.next === null ? step.message : `${step.message} ${step.next}`;
+      log.warn(text);
+      refused.push(text);
+      void vscode.window
+        .showWarningMessage(text, ...step.actions.map((action) => action.title))
+        .then((title) => {
+          const action = step.actions.find((entry) => entry.title === title);
+          if (action !== undefined) act(action.kind);
+        });
+    },
+  };
+  const review = registerReview(context, host);
+  const planOf = registerOptimize(context, host, review);
+  for (const folder of fileFolders()) {
+    if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
+      void review.show(folder, false);
+    }
+  }
+
   context.subscriptions.push(
+    problems,
+    {
+      dispose: () => {
+        for (const timer of refreshes.values()) clearTimeout(timer);
+      },
+    },
     log,
     status,
     auditTree,
@@ -414,6 +547,15 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       new Promise<void>((resolve) => {
         started.push(resolve);
       }),
+    plan: planOf,
+    review: (folder) => review.current(folder),
+    problems: () => [...problems],
+    refusals: () => refused,
+    idle: async () => {
+      while (active > 0 || refreshes.size > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    },
   };
 }
 

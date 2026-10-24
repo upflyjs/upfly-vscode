@@ -4,7 +4,8 @@
  * system's temporary folder, outside the repository, and a `.code-workspace` file naming them.
  * The tests then run on copies, so nothing they do can reach the repository.
  */
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,4 +47,63 @@ export function fixtureWorkspace(fixtures, extra = {}) {
     JSON.stringify({ folders: fixtures.map((name) => ({ path: name })) }),
   );
   return { root, workspaceFile };
+}
+
+/**
+ * The workspace the tests of changing files open: a copy of plain-html in a git repository of
+ * its own, whose config names the folder itself as the one the site is served from, and a
+ * small site whose root-relative paths resolve against no folder, each committed.
+ *
+ * @returns {{ root: string, workspaceFile: string }}
+ */
+export function changeWorkspace() {
+  const config = { $schema: './node_modules/upfly/schema/config.json', publicDirs: ['.'] };
+  const { root, workspaceFile } = fixtureWorkspace(['plain-html'], {
+    'plain-html': { 'upfly.config.json': `${JSON.stringify(config, null, 2)}\n` },
+  });
+  const unknown = path.join(root, 'unknown-root');
+  mkdirSync(path.join(unknown, 'img'), { recursive: true });
+  cpSync(
+    path.join(FIXTURES, 'plain-html', 'images', 'logo.png'),
+    path.join(unknown, 'img', 'logo.png'),
+  );
+  const photos = Array.from(
+    { length: 12 },
+    (_, index) => `<img src="/pics/photo-${index + 1}.png">`,
+  );
+  writeFileSync(
+    path.join(unknown, 'index.html'),
+    [...photos, '<img src="img/logo.png">', ''].join('\n'),
+  );
+  for (const folder of [path.join(root, 'plain-html'), unknown]) commitAll(folder);
+  writeFileSync(
+    workspaceFile,
+    JSON.stringify({ folders: [{ path: 'plain-html' }, { path: 'unknown-root' }] }),
+  );
+  return { root, workspaceFile };
+}
+
+/**
+ * Commits every file of a folder, starting a git repository there first, with an identity of
+ * its own, when it has none.
+ *
+ * @param {string} folder
+ * @param {string} [message]
+ */
+export function commitAll(folder, message = 'The fixture') {
+  /** @param {string[]} args */
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: folder,
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: path.dirname(folder) },
+      stdio: 'pipe',
+    });
+  if (!existsSync(path.join(folder, '.git'))) {
+    git('init', '-q');
+    git('config', 'user.name', 'Upfly tests');
+    git('config', 'user.email', 'tests@example.com');
+    git('config', 'commit.gpgsign', 'false');
+  }
+  git('add', '-A');
+  git('commit', '-q', '-m', message);
 }

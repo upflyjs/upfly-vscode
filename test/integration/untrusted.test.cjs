@@ -57,6 +57,30 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.equal(outcome.error?.reason, 'CODE_CONFIG_NOT_RUN');
   });
 
+  it('optimizes no image there, and says why', async () => {
+    const image = vscode.Uri.joinPath(folder(1).uri, 'src', 'img', 'logo.png');
+    const outcome = await vscode.commands.executeCommand('upfly.optimize', image);
+    assert.equal(outcome, undefined);
+    assert.equal(api.plan(folder(1).uri), undefined);
+    assert.match(
+      String(api.refusals().at(-1)),
+      /^This workspace is not trusted, so Upfly changes no file in it\./,
+    );
+  });
+
+  it('optimizes no folder there either', async () => {
+    const before = api.refusals().length;
+    const outcome = await vscode.commands.executeCommand('upfly.optimizeWorkspace', folder(1).uri);
+    assert.equal(outcome, undefined);
+    assert.equal(api.refusals().length, before + 1);
+  });
+
+  it('undoes no run there', async () => {
+    const before = api.refusals().length;
+    await vscode.commands.executeCommand('upfly.review.undoRun', folder(1).uri);
+    assert.equal(api.refusals().length, before + 1);
+  });
+
   it('never ran the config', () => {
     assert.equal(existsSync(String(process.env.UPFLY_MARK)), false);
   });

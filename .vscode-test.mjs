@@ -1,43 +1,74 @@
 // @ts-check
 /**
- * The integration tests' configuration for `vscode-test`. `extension` runs them on the
- * extension from this repository; `package` runs the same tests on a built package, installed
- * into the test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the VS Code
- * version (the current release by default), and UPFLY_VSCODE_EXECUTABLE an installation
- * already on disk.
+ * The integration tests' configuration for `vscode-test`. `extension` runs the read-only tests
+ * on the extension from this repository, and `change` the tests that change files, each on a
+ * workspace of its own. `package` and `package-change` run the same tests on a built package,
+ * installed into the test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the
+ * VS Code version (the current release by default), and UPFLY_VSCODE_EXECUTABLE an
+ * installation already on disk.
  */
 import { defineConfig } from '@vscode/test-cli';
-import { EDITOR_VARIABLE, fixtureWorkspace } from './test/integration/workspace.mjs';
+import {
+  EDITOR_VARIABLE,
+  changeWorkspace,
+  fixtureWorkspace,
+} from './test/integration/workspace.mjs';
 
 // The test's editor inherits this process's environment.
 for (const key of Object.keys(process.env)) {
   if (EDITOR_VARIABLE.test(key)) Reflect.deleteProperty(process.env, key);
 }
-const { workspaceFile } = fixtureWorkspace(['eleventy', 'plain-html']);
+const label = process.argv[process.argv.indexOf('--label') + 1] ?? '';
+const read = fixtureWorkspace(['eleventy', 'plain-html']).workspaceFile;
+// Made only for the run that opens it, since it starts a git repository in each copy.
+const change = label.endsWith('change') ? changeWorkspace().workspaceFile : read;
 const executable = process.env.UPFLY_VSCODE_EXECUTABLE;
 const vsix = process.env.UPFLY_VSIX;
 
-/** @type {import('@vscode/test-cli').TestConfiguration} */
+/** @type {Omit<import('@vscode/test-cli').TestConfiguration, 'label' | 'files' | 'workspaceFolder'>} */
 const common = {
-  files: 'test/integration/extension.test.cjs',
-  workspaceFolder: workspaceFile,
   mocha: { ui: 'bdd', timeout: 180_000 },
   ...(executable === undefined
     ? { version: process.env.UPFLY_VSCODE_VERSION ?? 'stable' }
     : { useInstallation: { fromPath: executable } }),
 };
+const installed = {
+  extensionDevelopmentPath: 'test/integration/driver',
+  installExtensions: [vsix ?? ''],
+  env: { UPFLY_PACKAGE: '1' },
+};
 
 export default defineConfig([
-  { ...common, label: 'extension', launchArgs: ['--disable-extensions'] },
+  {
+    ...common,
+    label: 'extension',
+    files: 'test/integration/extension.test.cjs',
+    workspaceFolder: read,
+    launchArgs: ['--disable-extensions'],
+  },
+  {
+    ...common,
+    label: 'change',
+    files: 'test/integration/change.test.cjs',
+    workspaceFolder: change,
+    launchArgs: ['--disable-extensions'],
+  },
   ...(vsix === undefined
     ? []
     : [
         {
           ...common,
+          ...installed,
           label: 'package',
-          extensionDevelopmentPath: 'test/integration/driver',
-          installExtensions: [vsix],
-          env: { UPFLY_PACKAGE: '1' },
+          files: 'test/integration/extension.test.cjs',
+          workspaceFolder: read,
+        },
+        {
+          ...common,
+          ...installed,
+          label: 'package-change',
+          files: 'test/integration/change.test.cjs',
+          workspaceFolder: change,
         },
       ]),
 ]);
