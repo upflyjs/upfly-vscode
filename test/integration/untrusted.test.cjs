@@ -85,6 +85,15 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.match(String(api.review(folder(1).uri)?.error), /^This workspace is not trusted/);
   });
 
+  it('converts no upfly.config.json of the old extension there, and says why', async () => {
+    const outcome = await vscode.commands.executeCommand('upfly.convertOldConfig', folder(1).uri);
+    assert.equal(outcome, undefined);
+    assert.match(
+      String(api.refusals().at(-1)),
+      /^This workspace is not trusted, so Upfly changes no file in it\. Trust the workspace to convert its upfly\.config\.json\.$/,
+    );
+  });
+
   it('registers no MCP server, though a folder there holds an Upfly config', async () => {
     assert.deepEqual(await api.mcpServers(), []);
   });

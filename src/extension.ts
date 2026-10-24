@@ -20,6 +20,8 @@ import type { AuditResult, CommandName, ErrorLine, RefsResult } from './contract
 import type { Host } from './host.js';
 import { openLocation } from './locations.js';
 import { type NodeRuntime, chooseNode, nodeOnPath, versionOf } from './node-runtime.js';
+import { registerOldUsers } from './old-users-ui.js';
+import type { SetSetting } from './old-users.js';
 import { type PlanOutcome, registerOptimize } from './optimize-ui.js';
 import { brokenProblems } from './problems.js';
 import { progressText } from './progress-text.js';
@@ -78,6 +80,16 @@ export interface UpflyExports {
   mcpServers(): Promise<readonly McpServer[]>;
   /** The labels of the MCP servers the editor has started. */
   mcpStarted(): readonly string[];
+  /** Each notice for users of the old extension shown so far, as its text. */
+  notices(): readonly string[];
+  /** Settles once the start's check for that notice is done. */
+  noticeChecked(): Promise<void>;
+  /** Checks for that notice again, as the next start does. */
+  checkNoticeAgain(): Promise<void>;
+  /** The old extension's settings set now, and where. */
+  oldSettings(): readonly SetSetting[];
+  /** The folders whose upfly.config.json is the old extension's. */
+  oldConfigs(): readonly string[];
 }
 
 /**
@@ -529,6 +541,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   const review = registerReview(context, host);
   const planOf = registerOptimize(context, host, review);
   const agents = registerAgents(context, host);
+  const oldUsers = registerOldUsers(context, host, agents);
   for (const folder of fileFolders()) {
     if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
       void review.show(folder, false);
@@ -600,6 +613,11 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     },
     mcpServers: () => agents.servers(),
     mcpStarted: () => agents.started(),
+    notices: () => oldUsers.notices(),
+    noticeChecked: () => oldUsers.noticeChecked(),
+    checkNoticeAgain: () => oldUsers.checkNoticeAgain(),
+    oldSettings: () => oldUsers.oldSettings(),
+    oldConfigs: () => oldUsers.oldConfigs(),
   };
 }
 

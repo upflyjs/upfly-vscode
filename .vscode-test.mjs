@@ -1,13 +1,14 @@
 // @ts-check
 /**
  * The integration tests' configuration for `vscode-test`. `extension` runs the read-only tests
- * on the extension from this repository, `change` the tests that change files, and `agents`
- * those of coding agents, each on a workspace of its own; `exit` the exit test on copies of
- * Upfly's own fixtures, which
- * UPFLY_FIXTURES names when no checkout of Upfly sits beside this one. `package` and `package-change` run the same tests on a built package,
- * installed into the test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the
- * VS Code version (the current release by default), and UPFLY_VSCODE_EXECUTABLE an
- * installation already on disk.
+ * on the extension from this repository, `change` the tests that change files, `agents` those
+ * of coding agents, and `update` those of the old extension's users, each on a workspace of its
+ * own; `exit` the exit test on copies of Upfly's own fixtures, which UPFLY_FIXTURES names when
+ * no checkout of Upfly sits beside this one.
+ * `package` and `package-change` run the same tests on a built package, installed into the
+ * test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the VS Code version
+ * (the current release by default), and UPFLY_VSCODE_EXECUTABLE an installation already on
+ * disk.
  */
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +21,7 @@ import {
   changeWorkspace,
   exitWorkspace,
   fixtureWorkspace,
+  updateWorkspace,
 } from './test/integration/workspace.mjs';
 
 // The test's editor inherits this process's environment.
@@ -33,6 +35,7 @@ const change = label.endsWith('change') ? changeWorkspace().workspaceFile : read
 const exit =
   label === 'exit' ? exitWorkspace(exitRoot(), upflyFixtures(), FIXTURES).workspaceFile : read;
 const agents = label === 'agents' ? agentsWorkspace() : null;
+const update = label === 'update' ? updateWorkspace() : null;
 const executable = process.env.UPFLY_VSCODE_EXECUTABLE;
 const vsix = process.env.UPFLY_VSIX;
 
@@ -92,6 +95,17 @@ export default defineConfig([
     launchArgs: [
       '--disable-extensions',
       ...(agents === null ? [] : [`--user-data-dir=${agents.userData}`]),
+    ],
+  },
+  {
+    ...common,
+    label: 'update',
+    files: 'test/integration/update.test.cjs',
+    workspaceFolder: update?.workspaceFile ?? read,
+    // A profile whose settings hold the old extension's, as after the update.
+    launchArgs: [
+      '--disable-extensions',
+      ...(update === null ? [] : [`--user-data-dir=${update.userData}`]),
     ],
   },
   {

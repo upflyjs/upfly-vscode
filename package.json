@@ -23,7 +23,7 @@
     "vscode": "^1.101.0"
   },
   "main": "./dist/extension.cjs",
-  "activationEvents": ["workspaceContains:.upfly/manifest.json"],
+  "activationEvents": ["workspaceContains:.upfly/manifest.json", "onStartupFinished"],
   "extensionKind": ["workspace"],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -167,6 +167,21 @@
       {
         "command": "upfly.copyMcpSetup",
         "title": "Copy the MCP setup for Cursor or Windsurf",
+        "category": "Upfly"
+      },
+      {
+        "command": "upfly.whatsNew",
+        "title": "What's new",
+        "category": "Upfly"
+      },
+      {
+        "command": "upfly.removeOldSettings",
+        "title": "Remove the old extension's settings",
+        "category": "Upfly"
+      },
+      {
+        "command": "upfly.convertOldConfig",
+        "title": "Convert the old extension's upfly.config.json",
         "category": "Upfly"
       }
     ],
@@ -368,6 +383,14 @@
         {
           "command": "upfly.planCancel",
           "when": "false"
+        },
+        {
+          "command": "upfly.removeOldSettings",
+          "when": "upfly.oldSettings"
+        },
+        {
+          "command": "upfly.convertOldConfig",
+          "when": "upfly.oldConfig"
         }
       ],
       "editor/title": [
@@ -392,7 +415,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "check": "npm run lint && npm run comments:check && npm run typecheck && npm test",
-    "test:integration": "node scripts/build.mjs && vscode-test --label extension && vscode-test --label change && vscode-test --label agents",
+    "test:integration": "node scripts/build.mjs && vscode-test --label extension && vscode-test --label change && vscode-test --label agents && vscode-test --label update",
     "test:untrusted": "node scripts/build.mjs && node scripts/untrusted-check.mjs",
     "test:exit": "node scripts/build.mjs && vscode-test --label exit && node scripts/exit-builds.mjs"
   },

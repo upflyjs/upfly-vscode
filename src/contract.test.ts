@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { Ajv } from 'ajv';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
+import { OLD_CONFIG } from '../test/integration/workspace.mjs';
 import { agentsReport } from './agents.js';
 import { auditNodes } from './audit-model.js';
 import type {
@@ -29,7 +30,10 @@ import type {
   RefsResult,
   UndoResult,
 } from './contract.js';
+import { convertOldConfig } from './convert-config.js';
+import { projectFolders } from './old-config-files.js';
 import { onlyPattern } from './plan-model.js';
+import { readConfigText } from './project-config.js';
 import { refsNodes } from './refs-model.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
 
@@ -220,6 +224,33 @@ describe('the runner on the real CLI', () => {
         3,
         'V2_EXTENSION_CONFIG',
       ]);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("audits a folder once the old extension's config there is converted, reading its watch part", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-converted-'));
+    const config = path.join(folder, 'upfly.config.json');
+    try {
+      cpSync(FIXTURE, folder, { recursive: true });
+      writeFileSync(config, OLD_CONFIG);
+      const before = await run({ command: 'audit', args: ['--no-probe'], cwd: folder });
+      const old = readConfigText(OLD_CONFIG) as Record<string, unknown>;
+      const converted = convertOldConfig(old, projectFolders(folder));
+      expect(converted.config.watch).toEqual({ folders: ['images'], keepOriginals: true });
+      writeFileSync(config, converted.text);
+      const after = await run({ command: 'audit', args: ['--no-probe'], cwd: folder });
+      // The same file with a watched folder outside the project, which the CLI turns away.
+      const outside = { ...converted.config, watch: { folders: ['../elsewhere'] } };
+      writeFileSync(config, JSON.stringify(outside));
+      const refused = await run({ command: 'audit', args: ['--no-probe'], cwd: folder });
+      expect([
+        before.kind === 'stopped' && before.error.reason,
+        after.kind,
+        refused.kind === 'stopped' && refused.error.exitCode,
+        refused.kind === 'stopped' && /watch\.folders/.test(refused.error.message),
+      ]).toEqual(['V2_EXTENSION_CONFIG', 'result', 2, true]);
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

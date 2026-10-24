@@ -21,6 +21,7 @@ export interface StepAction {
     | 'plan-again'
     | 'trust'
     | 'open-config'
+    | 'convert-config'
     | 'output';
   readonly title: string;
 }
@@ -102,6 +103,10 @@ export function nextStep(error: ErrorLine, doing: Doing): NextStep {
       };
     case 'CONFIG_EXISTS':
       return step('Edit that file instead.', [{ kind: 'open-config', title: 'Open the config' }]);
+    case 'V2_EXTENSION_CONFIG':
+      return step("Convert it to Upfly 3's config, keeping a copy of the old file in .upfly.", [
+        { kind: 'convert-config', title: 'Convert upfly.config.json' },
+      ]);
     case 'NOT_IN_RUN':
       return step('The review is read again from the run, as it stands now.');
     default:

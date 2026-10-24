@@ -69,6 +69,15 @@ describe('nextStep', () => {
     expect(kinds(stop('CONFIG_EXISTS'), 'init')).toEqual(['open-config']);
   });
 
+  it("offers to convert the old extension's upfly.config.json, which the CLI does not read", () => {
+    const step = nextStep(stop('V2_EXTENSION_CONFIG', 'It belongs to the extension.', 2), 'plan');
+    expect([step.message, step.next, step.actions]).toEqual([
+      'It belongs to the extension.',
+      "Convert it to Upfly 3's config, keeping a copy of the old file in .upfly.",
+      [{ kind: 'convert-config', title: 'Convert upfly.config.json' }],
+    ]);
+  });
+
   it('adds nothing where the message itself says what to do', () => {
     expect(nextStep(stop('IGNORED_BY_GIT'), 'apply')).toEqual({
       message: 'The CLI said why.',

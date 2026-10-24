@@ -198,6 +198,40 @@ export function agentsWorkspace() {
   return { root, workspaceFile, userData };
 }
 
+/**
+ * The workspace of the old users' tests: a copy of plain-html (site) with the old extension's
+ * config and one of its settings in the folder's own settings, another copy (other), one more
+ * old setting in the workspace file, and a profile whose settings hold two more, as the old
+ * extension's users have them.
+ *
+ * @returns {{ root: string, workspaceFile: string, userData: string }}
+ */
+export function updateWorkspace() {
+  const root = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-update-'));
+  const workspaceFile = path.join(root, 'update.code-workspace');
+  const userData = path.join(root, 'user-data');
+  const json = (/** @type {object} */ value) => `${JSON.stringify(value, null, 2)}\n`;
+  for (const name of ['site', 'other']) {
+    cpSync(path.join(FIXTURES, 'plain-html'), path.join(root, name), { recursive: true });
+  }
+  writeFileSync(path.join(root, 'site', 'upfly.config.json'), OLD_CONFIG);
+  mkdirSync(path.join(root, 'site', '.vscode'));
+  writeFileSync(
+    path.join(root, 'site', '.vscode', 'settings.json'),
+    json({ 'upfly.storageMode': 'separate-output' }),
+  );
+  writeFileSync(
+    workspaceFile,
+    json({ folders: [{ path: 'site' }, { path: 'other' }], settings: { 'upfly.quality': 70 } }),
+  );
+  mkdirSync(path.join(userData, 'User'), { recursive: true });
+  writeFileSync(
+    path.join(userData, 'User', 'settings.json'),
+    json({ 'upfly.enabled': true, 'upfly.watchTargets': ['public'] }),
+  );
+  return { root, workspaceFile, userData };
+}
+
 /** What a fixture copy leaves out: dependencies, build outputs and caches. */
 const NOT_COPIED = new Set(['node_modules', 'dist', '_site', '.next', 'out', '.astro', '.cache']);
 

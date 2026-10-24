@@ -345,6 +345,8 @@ export function registerOptimize(
         return vscode.commands.executeCommand('workbench.view.scm');
       case 'trust':
         return vscode.commands.executeCommand('workbench.trust.manage');
+      case 'convert-config':
+        return vscode.commands.executeCommand('upfly.convertOldConfig', state.folder.uri);
       case 'undo-run':
         return vscode.commands.executeCommand('upfly.review.undoRun', state.folder.uri);
       case 'output':

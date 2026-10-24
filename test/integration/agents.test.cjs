@@ -30,6 +30,11 @@ describe('coding agents and the Upfly extension', function () {
     api = await extension.activate();
   });
 
+  it("shows a fresh install no notice for the old extension's users, a project's old config included", async () => {
+    await api.noticeChecked();
+    assert.deepEqual(api.notices(), []);
+  });
+
   it('registers one MCP server for each folder with an Upfly config, and none for the others', async () => {
     const servers = await api.mcpServers();
     assert.deepEqual(
