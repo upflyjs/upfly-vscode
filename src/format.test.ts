@@ -1,6 +1,6 @@
 import { formatBytes as engineFormatBytes } from 'upfly-core/internal';
 import { describe, expect, it } from 'vitest';
-import { formatBytes, plural } from './format.js';
+import { codeSpan, formatBytes, plural } from './format.js';
 
 describe('formatBytes', () => {
   it('writes sizes as the CLI writes them, so the editor and the terminal agree', () => {
@@ -23,5 +23,15 @@ describe('plural', () => {
 
   it('takes the plural it is given for a noun that is not regular', () => {
     expect(plural(2, 'copy', 'copies')).toBe('2 copies');
+  });
+});
+
+describe('codeSpan', () => {
+  it('fences a path that holds a backtick with a longer run of them', () => {
+    expect(codeSpan('a`b.png')).toBe('``a`b.png``');
+  });
+
+  it('pads a path that starts with a backtick, as Markdown needs', () => {
+    expect(codeSpan('`x`')).toBe('`` `x` ``');
   });
 });

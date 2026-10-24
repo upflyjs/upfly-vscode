@@ -22,7 +22,6 @@ import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
 import { auditNodes } from './audit-model.js';
 import type { AuditResult, OptimizeResult, RefsResult, UndoResult } from './contract.js';
 import { refsNodes } from './refs-model.js';
-import { renderReport } from './report.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
 
 const CLI = fileURLToPath(new URL('../node_modules/upfly/', import.meta.url));
@@ -85,16 +84,25 @@ async function run(request: Omit<RunRequest, 'onProgress' | 'onDiagnostic'>): Pr
 
 describe('the runner on the real CLI', () => {
   it("reads an audit's progress and result, each as its schema describes it", async () => {
-    const outcome = await run({ command: 'audit', args: [], cwd: project });
+    const outcome = await run({
+      command: 'audit',
+      args: ['--include-images', '--include-text'],
+      cwd: project,
+    });
     expect(outcome.kind).toBe('result');
     if (outcome.kind !== 'result') return;
     const result = outcome.result as AuditResult;
-    expect(auditNodes(result).find((node) => node.icon === 'file-media')?.label).toBe(
+    const images = auditNodes(result).find((node) => node.icon === 'file-media');
+    expect([images?.label, images?.children?.length]).toEqual([
       `${result.report.summary.assets} images`,
-    );
-    expect(
-      renderReport(result, { folder: 'f', path: project, when: 'now', cliVersion: '3' }),
-    ).toContain('# Upfly audit: f');
+      result.report.summary.assets,
+    ]);
+    expect(result.text?.startsWith('Upfly audit')).toBe(true);
+  });
+
+  it('writes nothing into the project for the report in its own words', async () => {
+    await run({ command: 'audit', args: ['--include-text'], cwd: project });
+    expect(existsSync(path.join(project, '.upfly'))).toBe(false);
   });
 
   it("reads one image's references, each as the schema describes them", async () => {

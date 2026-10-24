@@ -23,7 +23,6 @@ import { type PlanOutcome, registerOptimize } from './optimize-ui.js';
 import { brokenProblems } from './problems.js';
 import { progressText } from './progress-text.js';
 import { refsNodes } from './refs-model.js';
-import { renderReport } from './report.js';
 import { type ReviewPart, registerReview } from './review-ui.js';
 import { type RunHandle, type RunOutcome, startRun } from './runner.js';
 import { NodeTree, type ViewNode, viewNodes } from './tree.js';
@@ -31,6 +30,8 @@ import { codeConfigRefusal, trustArgs } from './trust.js';
 
 const IMAGE_GLOB = '**/*.{avif,gif,jpeg,jpg,png,svg,tif,tiff,webp}';
 const REPORT_SCHEME = 'upfly-report';
+/** Every image with its references for the view, and the report in the CLI's own words. */
+const AUDIT_ARGS = ['--include-images', '--include-text'];
 
 /** One folder's last audit, as the views and the report show it. */
 type FolderAudit =
@@ -186,7 +187,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       audits.set(key, { kind: 'message', text: 'Auditing...', icon: 'sync~spin' });
       showAudits();
     }
-    const outcome = await runIn(chosen, folder, 'audit', [], 'upfly.audit', label);
+    const outcome = await runIn(chosen, folder, 'audit', AUDIT_ARGS, 'upfly.audit', label);
     if (quiet && outcome.kind !== 'result') return outcome;
     audits.set(key, auditState(outcome, folder));
     if (outcome.kind === 'result') showProblems(folder, outcome.result as AuditResult);
@@ -459,14 +460,9 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       const folder = fileFolders().find((entry) => entry.uri.toString() === uri.query);
       const audit = folder === undefined ? undefined : audits.get(folder.uri.toString());
       if (folder === undefined || audit?.kind !== 'result') {
-        return '# Upfly audit\n\nThis folder has not been audited yet. Run Upfly: Audit workspace.\n';
+        return 'Upfly audit\n\nThis folder has not been audited yet. Run Upfly: Audit workspace.\n';
       }
-      return renderReport(audit.result, {
-        folder: folder.name,
-        path: folder.uri.fsPath,
-        when: audit.when.toLocaleString(),
-        cliVersion: audit.cliVersion,
-      });
+      return audit.result.text ?? 'Upfly audit\n\nThis audit carries no report text.\n';
     },
   };
 
@@ -583,7 +579,7 @@ function fileFolders(): readonly vscode.WorkspaceFolder[] {
 function reportUri(folder: vscode.WorkspaceFolder): vscode.Uri {
   return vscode.Uri.from({
     scheme: REPORT_SCHEME,
-    path: `/${folder.name}/Upfly audit.md`,
+    path: `/${folder.name}/Upfly audit.txt`,
     query: folder.uri.toString(),
   });
 }

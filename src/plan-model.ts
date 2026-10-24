@@ -8,8 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import type { OptimizeResult, Plan, Rewrite } from './contract.js';
-import { formatBytes, plural } from './format.js';
-import { codeSpan } from './report.js';
+import { codeSpan, formatBytes, plural } from './format.js';
 
 /** Which images a plan is for: the ones a person chose, or every image in the folder. */
 export type PlanScope =

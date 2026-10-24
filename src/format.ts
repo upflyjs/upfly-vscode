@@ -17,6 +17,19 @@ function tenths(value: number): string {
 }
 
 /**
+ * Text as a Markdown code span, fenced with one more backtick than the longest run inside it,
+ * and padded when it starts or ends with one, as CommonMark requires.
+ *
+ * @param text a path or quote as Upfly printed it
+ */
+export function codeSpan(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/**
  * A count and its noun, agreeing: `1 image`, `2 images`.
  *
  * @param count how many

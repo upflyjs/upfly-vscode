@@ -103,14 +103,21 @@ describe('the Upfly extension', function () {
     assert.equal(editor.document.getText(editor.selection), 'images/missing-on-purpose.png');
   });
 
-  it('opens the report of one folder as a Markdown document', async () => {
+  it("opens the report of one folder in the CLI's own words", async () => {
     await vscode.commands.executeCommand('upfly.showReport', folder(1).uri);
     const editor = vscode.window.activeTextEditor;
     assert.ok(editor);
     assert.equal(editor.document.uri.scheme, 'upfly-report');
-    assert.equal(editor.document.languageId, 'markdown');
-    assert.match(editor.document.getText(), /^# Upfly audit: plain-html/);
-    assert.match(editor.document.getText(), /`images\/missing-on-purpose\.png` in about\.html:10/);
+    assert.equal(editor.document.languageId, 'plaintext');
+    assert.match(editor.document.getText(), /^Upfly audit\r?\nRun /);
+    assert.match(editor.document.getText(), /about\.html:10 {2}images\/missing-on-purpose\.png/);
+  });
+
+  it('lists each image in the audit view with the code that uses it', () => {
+    const images = row(row(api.auditRows(), 'plain-html').children, '11 images').children;
+    const logo = row(images, 'images/logo.png');
+    assert.match(logo.description, /, 1 reference$/);
+    assert.equal(logo.children[0].label, 'index.html:10');
   });
 
   it('lists every reference to an image at its file and line, then what optimize would do', async () => {

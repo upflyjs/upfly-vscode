@@ -42,6 +42,59 @@ describe('auditNodes', () => {
     expect(images.description).toBe('126.9 KB, 10 in use');
   });
 
+  it('lists every image under the images row, each with the code that uses it at file and line', () => {
+    const images = section(
+      auditNodes(
+        result([], {
+          images: [
+            {
+              path: 'src/logo.png',
+              bytes: 6_345,
+              references: [
+                { file: 'src/App.jsx', line: 4, text: './logo.png' },
+                { file: 'index.html', line: null, text: '/src/logo.png' },
+              ],
+              findings: ['format-opportunity'],
+            },
+          ],
+        }),
+      ),
+      '12 images',
+    );
+    const [logo] = images.children ?? [];
+    expect([logo?.label, logo?.description, logo?.image]).toEqual([
+      'src/logo.png',
+      '6.3 KB, 2 references',
+      'src/logo.png',
+    ]);
+    expect(logo?.children?.map((child) => [child.label, child.description, child.open])).toEqual([
+      ['src/App.jsx:4', './logo.png', { file: 'src/App.jsx', line: 4, search: './logo.png' }],
+      ['index.html', '/src/logo.png', { file: 'index.html', line: null, search: '/src/logo.png' }],
+    ]);
+  });
+
+  it('says an image no reference links is unused, or names its finding', () => {
+    const images = section(
+      auditNodes(
+        result([], {
+          images: [
+            { path: 'a.png', bytes: 10, references: [], findings: ['dead'] },
+            { path: 'b.png', bytes: 10, references: [], findings: ['possibly-dead'] },
+          ],
+        }),
+      ),
+      '12 images',
+    );
+    expect(images.children?.map((child) => child.description)).toEqual([
+      '10 B, unused',
+      '10 B, possibly unused',
+    ]);
+  });
+
+  it('keeps the images row without a list when the result carries none', () => {
+    expect(section(auditNodes(result()), '12 images').children).toBeUndefined();
+  });
+
   it('counts the references and the files that hold them', () => {
     const references = section(auditNodes(result()), '12 references');
     expect(references.description).toBe('in 5 files, 10 lead to an image');

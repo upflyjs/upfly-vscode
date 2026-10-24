@@ -3,7 +3,14 @@
  * so what the tree says can be tested without VS Code. `tree.ts` turns these into tree items.
  */
 
-import type { AuditResult, Conversion, Finding, Report, UnsafeReference } from './contract.js';
+import type {
+  AuditImage,
+  AuditResult,
+  Conversion,
+  Finding,
+  Report,
+  UnsafeReference,
+} from './contract.js';
 import { formatBytes, plural } from './format.js';
 
 /** A place in the project to open: a file, at a line when one is known. */
@@ -44,7 +51,7 @@ export function auditNodes(result: AuditResult): TreeNode[] {
     report.findings.filter((finding): finding is FindingOf<K> => finding.kind === kind);
   return [
     ...servingRootNodes(of('serving-root-unknown')),
-    imagesNode(report),
+    imagesNode(report, result.images),
     referencesNode(report),
     smallerNode(result, of('format-opportunity')),
     findingNode('Broken references', 'error', of('broken').map(brokenNode), (n) =>
@@ -74,13 +81,43 @@ export function parseWhere(where: string): Location {
     : { file: match[1] as string, line: Number(match[2]) };
 }
 
-function imagesNode(report: Report): TreeNode {
+function imagesNode(report: Report, images: readonly AuditImage[] | undefined): TreeNode {
   const { assets, assetBytes, referencedAssets } = report.summary;
   return {
     label: plural(assets, 'image'),
     description: `${formatBytes(assetBytes)}, ${referencedAssets} in use`,
-    tooltip: `Upfly found ${plural(assets, 'image')} in this folder, ${formatBytes(assetBytes)} together; ${referencedAssets} of them ${referencedAssets === 1 ? 'is' : 'are'} used by at least one reference. Right-click an image in the Explorer to see where it is used.`,
+    tooltip: `Upfly found ${plural(assets, 'image')} in this folder, ${formatBytes(assetBytes)} together; ${referencedAssets} of them ${referencedAssets === 1 ? 'is' : 'are'} used by at least one reference. Each one lists the code that uses it.`,
     icon: 'file-media',
+    ...(images === undefined || images.length === 0 ? {} : { children: images.map(imageNode) }),
+  };
+}
+
+/** What an image with no reference is, from the findings that name it. */
+const UNLINKED: Partial<Record<AuditImage['findings'][number], string>> = {
+  dead: 'unused',
+  'possibly-dead': 'possibly unused',
+};
+
+function imageNode(image: AuditImage): TreeNode {
+  const unlinked = image.findings.map((kind) => UNLINKED[kind]).find((word) => word !== undefined);
+  const uses =
+    image.references.length > 0
+      ? plural(image.references.length, 'reference')
+      : (unlinked ?? 'no reference');
+  return {
+    label: image.path,
+    description: `${formatBytes(image.bytes)}, ${uses}`,
+    open: { file: image.path, line: null },
+    image: image.path,
+    ...(image.references.length === 0
+      ? {}
+      : {
+          children: image.references.map((reference) => ({
+            label: reference.line === null ? reference.file : `${reference.file}:${reference.line}`,
+            description: reference.text,
+            open: { file: reference.file, line: reference.line, search: reference.text },
+          })),
+        }),
   };
 }
 
