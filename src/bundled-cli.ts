@@ -1,8 +1,8 @@
 /**
- * The CLI the extension carries, and the one a project may have installed itself. The
- * extension always runs its own, so that every result comes from the version it was built
- * and tested with; when the project installs another, the editor says so, because a run of
- * `npx upfly` in a terminal then uses that one.
+ * The CLI and the MCP server the extension carries, and the CLI a project may have installed
+ * itself. The extension always runs its own, so that every result comes from the version it
+ * was built and tested with; when the project installs another, the editor says so, because a
+ * run of `npx upfly` in a terminal then uses that one.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -23,12 +23,38 @@ export interface BundledCli {
  * @returns the CLI, or null when neither place holds one
  */
 export function findBundledCli(extensionPath: string): BundledCli | null {
+  return findCarried(extensionPath, 'upfly', path.join('bin', 'upfly.cjs'));
+}
+
+/** The carried MCP server: its version and its entry point. */
+export interface BundledMcp {
+  readonly version: string;
+  /** `dist/bin.js`, which serves the folder it is given over standard input and output. */
+  readonly bin: string;
+}
+
+/**
+ * Finds the `upfly-mcp` the extension carries beside its CLI, in the same places. It runs the
+ * `upfly` installed with it, which is the extension's own CLI.
+ *
+ * @param extensionPath the extension's own folder
+ * @returns the server, or null when neither place holds one
+ */
+export function findBundledMcp(extensionPath: string): BundledMcp | null {
+  return findCarried(extensionPath, 'upfly-mcp', path.join('dist', 'bin.js'));
+}
+
+function findCarried(
+  extensionPath: string,
+  name: string,
+  bin: string,
+): { version: string; bin: string } | null {
   for (const folder of [
-    path.join(extensionPath, 'engine', 'node_modules', 'upfly'),
-    path.join(extensionPath, 'node_modules', 'upfly'),
+    path.join(extensionPath, 'engine', 'node_modules', name),
+    path.join(extensionPath, 'node_modules', name),
   ]) {
-    const version = packageVersion(folder);
-    if (version !== null) return { version, bin: path.join(folder, 'bin', 'upfly.cjs') };
+    const version = packageVersion(folder, name);
+    if (version !== null) return { version, bin: path.join(folder, bin) };
   }
   return null;
 }
@@ -54,7 +80,7 @@ export function projectCliVersion(projectFolder: string): string | null {
     folders.push(folder);
   }
   for (const folder of folders) {
-    const version = packageVersion(path.join(folder, 'node_modules', 'upfly'));
+    const version = packageVersion(path.join(folder, 'node_modules', 'upfly'), 'upfly');
     if (version !== null) return version;
   }
   return null;
@@ -79,11 +105,11 @@ export function versionNotice(
   return `This project has upfly ${projectVersion} installed. The editor runs the upfly ${bundledVersion} it carries, so a terminal run of npx upfly can answer differently.`;
 }
 
-function packageVersion(folder: string): string | null {
+function packageVersion(folder: string, expected: string): string | null {
   try {
     const manifest: unknown = JSON.parse(readFileSync(path.join(folder, 'package.json'), 'utf8'));
     const { name, version } = manifest as { name?: unknown; version?: unknown };
-    return name === 'upfly' && typeof version === 'string' ? version : null;
+    return name === expected && typeof version === 'string' ? version : null;
   } catch {
     return null;
   }

@@ -2,10 +2,11 @@
 // @ts-check
 /**
  * Builds the extension's package for one platform: the bundled extension, and in `engine/`
- * the published `upfly`, at the exact version this repository depends on, installed from npm
- * for the target platform, so the package carries that platform's sharp and no other. The
- * package is assembled in a folder of its own, which `vsce package --no-dependencies` takes
- * whole, so the development dependencies and this computer's own sharp never reach it.
+ * the published `upfly` and `upfly-mcp`, at the exact version this repository depends on,
+ * installed from npm for the target platform, so the package carries that platform's sharp and
+ * no other. The package is assembled in a folder of its own, which `vsce package
+ * --no-dependencies` takes whole, so the development dependencies and this computer's own sharp
+ * never reach it.
  *
  * Usage: `node scripts/package.mjs <target> [--out <folder>]`, a target being one of
  * TARGETS. It prints the package's path, its size, and how much it holds once unpacked.
@@ -124,8 +125,8 @@ export function zipFile(zip, name) {
 }
 
 /**
- * What a target's package must hold, and must not: the bundle, the carried CLI and engine,
- * sharp, and exactly the target's own sharp binaries.
+ * What a target's package must hold, and must not: the bundle, the carried CLI and engine, the
+ * MCP server running that same CLI, sharp, and exactly the target's own sharp binaries.
  *
  * @param {readonly string[]} names the archive's paths
  * @param {string} img the target's sharp binary name
@@ -142,10 +143,21 @@ export function contentProblems(names, img) {
     'extension/engine/node_modules/upfly/dist/bin.js',
     'extension/engine/node_modules/upfly/schema/audit.json',
     'extension/engine/node_modules/upfly-core/dist/index.js',
+    'extension/engine/node_modules/upfly-mcp/package.json',
+    'extension/engine/node_modules/upfly-mcp/dist/bin.js',
+    'extension/engine/node_modules/@modelcontextprotocol/server/package.json',
     'extension/engine/node_modules/sharp/package.json',
     `extension/engine/node_modules/@img/sharp-${img}/package.json`,
   ]) {
     if (!names.includes(required)) problems.push(`it lacks ${required}`);
+  }
+  // The server runs the `upfly` it resolves from its own folder, which must be the one above.
+  if (
+    names.some((name) =>
+      name.startsWith('extension/engine/node_modules/upfly-mcp/node_modules/upfly/'),
+    )
+  ) {
+    problems.push('it holds a second upfly inside upfly-mcp, which the MCP server would run');
   }
   const binaries = new Set(
     names
@@ -178,6 +190,12 @@ export function packageFor(target, out) {
     const upfly = manifest.dependencies.upfly;
     if (!/^\d+\.\d+\.\d+$/.test(upfly))
       throw new Error(`upfly must be an exact version, not ${upfly}`);
+    // upfly-mcp releases with the CLI and runs the upfly installed with it.
+    if (manifest.dependencies['upfly-mcp'] !== upfly) {
+      throw new Error(
+        `upfly-mcp must be the version of upfly, ${upfly}, not ${manifest.dependencies['upfly-mcp']}`,
+      );
+    }
 
     const stage = path.join(work, 'stage');
     // The engine folder carries the dependencies, so the manifest ships without them.
@@ -217,6 +235,7 @@ export function packageFor(target, out) {
         `--cpu=${platform.cpu}`,
         ...(platform.libc === undefined ? [] : [`--libc=${platform.libc}`]),
         `upfly@${upfly}`,
+        `upfly-mcp@${upfly}`,
       ],
       engine,
     );
@@ -251,10 +270,12 @@ export function packageFor(target, out) {
       entries.map((entry) => entry.name),
       platform.img,
     );
-    const carried = JSON.parse(
-      zipFile(zip, 'extension/engine/node_modules/upfly/package.json').toString('utf8'),
-    ).version;
-    if (carried !== upfly) problems.push(`it carries upfly ${carried}, not ${upfly}`);
+    for (const name of ['upfly', 'upfly-mcp']) {
+      const carried = JSON.parse(
+        zipFile(zip, `extension/engine/node_modules/${name}/package.json`).toString('utf8'),
+      ).version;
+      if (carried !== upfly) problems.push(`it carries ${name} ${carried}, not ${upfly}`);
+    }
     if (problems.length > 0)
       throw new Error(`The ${target} package is wrong: ${problems.join('; ')}.`);
     return {

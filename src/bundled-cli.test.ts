@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findBundledCli, projectCliVersion, versionNotice } from './bundled-cli.js';
+import { findBundledCli, findBundledMcp, projectCliVersion, versionNotice } from './bundled-cli.js';
 
 const made: string[] = [];
 
@@ -48,6 +48,30 @@ describe('findBundledCli', () => {
 
   it('finds nothing in a folder that carries no CLI', () => {
     expect(findBundledCli(folder())).toBeNull();
+  });
+});
+
+describe('findBundledMcp', () => {
+  it('finds the upfly-mcp a package carries beside its CLI', () => {
+    const extension = folder();
+    const mcp = path.join(extension, 'engine', 'node_modules', 'upfly-mcp');
+    writePackage(mcp, 'upfly-mcp', '3.2.0');
+    expect(findBundledMcp(extension)).toEqual({
+      version: '3.2.0',
+      bin: path.join(mcp, 'dist', 'bin.js'),
+    });
+  });
+
+  it('falls back to the npm dependency a clone of this repository has', () => {
+    const extension = folder();
+    writePackage(path.join(extension, 'node_modules', 'upfly-mcp'), 'upfly-mcp', '3.2.0');
+    expect(findBundledMcp(extension)?.version).toBe('3.2.0');
+  });
+
+  it('finds nothing in a folder that carries no upfly-mcp, the CLI alone included', () => {
+    const extension = folder();
+    writePackage(path.join(extension, 'engine', 'node_modules', 'upfly'), 'upfly', '3.2.0');
+    expect(findBundledMcp(extension)).toBeNull();
   });
 });
 

@@ -395,6 +395,7 @@
     "vitest": "2.1.9"
   },
   "dependencies": {
-    "upfly": "3.2.0"
+    "upfly": "3.2.0",
+    "upfly-mcp": "3.2.0"
   }
 }

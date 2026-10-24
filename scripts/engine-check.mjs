@@ -2,10 +2,11 @@
 // @ts-check
 /**
  * Runs the engine a package carries on this computer's Node.js, outside VS Code: unpacks the
- * package's `engine` folder, then audits a copy of the plain HTML fixture and asks where one of
- * its images is used, as the extension would. It is the install check for a system VS Code
- * itself does not run on, such as Alpine Linux, where the extension runs inside a remote
- * server. It uses only Node.js's own modules, so it needs no install.
+ * package's `engine` folder, then audits a copy of the plain HTML fixture, asks where one of
+ * its images is used, and starts the MCP server on it and lists its tools, as the extension
+ * would. It is the install check for a system VS Code itself does not run on, such as Alpine
+ * Linux, where the extension runs inside a remote server. It uses only Node.js's own modules,
+ * so it needs no install.
  *
  * Usage: `node scripts/engine-check.mjs <package.vsix>`.
  */
@@ -14,6 +15,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import mcpClient from '../test/integration/mcp-client.cjs';
 import { zipEntries, zipFile } from './package.mjs';
 
 const FIXTURE = fileURLToPath(new URL('../test/fixtures/plain-html/', import.meta.url));
@@ -74,6 +76,27 @@ try {
     failures.push(`refs exited ${refs.status}: ${refs.line?.message ?? refs.stderr}`);
   } else {
     process.stdout.write(`refs: ${refs.line.references.length} references to images/logo.png\n`);
+  }
+  const server = path.join(
+    work,
+    'extension',
+    'engine',
+    'node_modules',
+    'upfly-mcp',
+    'dist',
+    'bin.js',
+  );
+  try {
+    const { tools } = await mcpClient.listTools(process.execPath, [server, project]);
+    if (!tools.includes('audit') || !tools.includes('optimize')) {
+      failures.push(`the MCP server lists ${tools.join(', ')}, without audit and optimize`);
+    } else {
+      process.stdout.write(`MCP server: ${tools.length} tools, ${tools.join(', ')}\n`);
+    }
+  } catch (error) {
+    failures.push(
+      `the MCP server did not start: ${error instanceof Error ? error.message : error}`,
+    );
   }
 } finally {
   rmSync(work, { recursive: true, force: true });
