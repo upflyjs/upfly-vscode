@@ -164,10 +164,10 @@
     "esbuild": "0.25.12",
     "mocha": "11.8.0",
     "typescript": "5.9.3",
-    "upfly-core": "3.1.0",
+    "upfly-core": "3.2.0",
     "vitest": "2.1.9"
   },
   "dependencies": {
-    "upfly": "3.1.0"
+    "upfly": "3.2.0"
   }
 }

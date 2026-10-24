@@ -5,7 +5,7 @@
  */
 
 /** A command the extension runs. */
-export type CommandName = 'audit' | 'refs';
+export type CommandName = 'audit' | 'refs' | 'optimize' | 'undo' | 'init';
 
 /** One stage of a run finished, with what it counted. */
 export type ProgressLine = {
@@ -161,7 +161,130 @@ export interface Conversion {
   readonly target: string;
   readonly format: 'webp' | 'avif';
   readonly savedBytes: number;
+  /** The original is removed once no file Upfly reads still names it. */
   readonly replacesOriginal: boolean;
+  /** The original sits in a folder the site is served from, where an outside link can name it. */
+  readonly inPublicDir: boolean;
+}
+
+/** One path re-spelled in a file. Offsets count the file's text in UTF-16 code units. */
+export interface Edit {
+  readonly start: number;
+  readonly end: number;
+  readonly replacement: string;
+  /** The path as written, which the edit replaces. */
+  readonly expected?: string;
+  /** The path is inside a comment, which no page loads. */
+  readonly inComment?: true;
+  /** The image the path names before the run. */
+  readonly asset?: string;
+}
+
+/** The edits to one file, and the hash of the text they were planned on. */
+export interface Rewrite {
+  readonly file: string;
+  readonly edits: readonly Edit[];
+  /** SHA-256 of the file's text as Upfly read it, in hexadecimal. */
+  readonly textHash?: string;
+}
+
+/** What `optimize` converts and rewrites, and what it decided against. */
+export interface Plan {
+  readonly conversions: readonly Conversion[];
+  readonly rewrites: readonly Rewrite[];
+  readonly declined: readonly {
+    readonly path: string;
+    readonly line: number | null;
+    readonly reason: string;
+  }[];
+  /** Converted images whose original stays anyway, and why. */
+  readonly keptOriginals: readonly { readonly asset: string; readonly reason: string }[];
+}
+
+/** The last line of `upfly optimize --json`, a dry run or an applied one. */
+export interface OptimizeResult {
+  readonly type: 'result';
+  readonly command: 'optimize';
+  readonly exitCode: 0;
+  readonly apply: boolean;
+  readonly plan: Plan;
+  /** What an applied run wrote, or null when it wrote nothing. */
+  readonly run: {
+    readonly id: string;
+    readonly created: readonly string[];
+    readonly changed: readonly string[];
+    readonly removed: readonly string[];
+  } | null;
+  readonly commit: string | null;
+  readonly only: {
+    readonly images: readonly string[];
+    readonly unmatched: readonly string[];
+  } | null;
+  /** Sentences about the run, such as what `--apply` would refuse. */
+  readonly notes: readonly string[];
+  readonly report: Report;
+}
+
+/** One path a run rewrote on a line. */
+export interface RunPath {
+  readonly before: string;
+  /** null only for a run an older Upfly recorded, when the file no longer holds it. */
+  readonly after: string | null;
+  /** The image `before` names, or null for a run an older Upfly recorded. */
+  readonly image: string | null;
+  readonly inComment: boolean;
+}
+
+/** One line a run changed. */
+export interface RunChange {
+  /** Counted from 1 in the file as the run left it; null only for an older Upfly's run. */
+  readonly line: number | null;
+  /** null when the file changed since, so its state cannot be told. */
+  readonly undone: boolean | null;
+  readonly paths: readonly RunPath[];
+}
+
+/** One file a run rewrote. */
+export interface RunFile {
+  readonly path: string;
+  /** Something other than the run changed it since, so none of its changes undo alone. */
+  readonly changedSince: boolean;
+  readonly changes: readonly RunChange[];
+}
+
+/** What the last run changed, as `upfly undo --list --json` lists it. */
+export interface RunList {
+  readonly id: string;
+  readonly startedAt: string;
+  readonly state: 'applied' | 'undone' | 'interrupted';
+  readonly files: readonly RunFile[];
+  readonly originals: readonly {
+    readonly path: string;
+    readonly movedTo: string | null;
+    readonly back: boolean;
+    readonly changedSince: boolean;
+  }[];
+  readonly created: readonly string[];
+}
+
+/** The last line of `upfly undo --json`. */
+export interface UndoResult {
+  readonly type: 'result';
+  readonly command: 'undo';
+  readonly exitCode: 0;
+  /** What was put back, or null when nothing was. */
+  readonly undone: {
+    readonly id: string;
+    readonly restored: readonly string[];
+    readonly reverted: readonly string[];
+    readonly removed: readonly string[];
+    readonly moved: readonly { readonly from: string; readonly to: string }[];
+  } | null;
+  readonly part: { readonly file: string; readonly line: number | null } | null;
+  readonly commit: string | null;
+  readonly notes: readonly string[];
+  /** With `--list` only: the last run, or null when no run has written to the project. */
+  readonly run?: RunList | null;
 }
 
 /** The last line of `upfly audit --json`. */
@@ -178,6 +301,28 @@ export interface AuditResult {
     readonly unmeasured: number;
     readonly conversions: readonly Conversion[];
   } | null;
+  /** With `--include-text` only: the report in the CLI's own words. */
+  readonly text?: string;
+  /** With `--include-images` only: every image with each reference that links it. */
+  readonly images?: readonly AuditImage[];
+}
+
+/** One image of `audit --include-images`. */
+export interface AuditImage {
+  readonly path: string;
+  readonly bytes: number;
+  readonly references: readonly {
+    readonly file: string;
+    readonly line: number | null;
+    readonly text: string;
+  }[];
+  readonly findings: readonly (
+    | 'dead'
+    | 'possibly-dead'
+    | 'oversized'
+    | 'format-opportunity'
+    | 'duplicate'
+  )[];
 }
 
 /** Why Upfly does not follow a line that names an image's path. */
@@ -228,4 +373,4 @@ export interface RefsResult {
 }
 
 /** A command's result line. */
-export type ResultLine = AuditResult | RefsResult;
+export type ResultLine = AuditResult | RefsResult | OptimizeResult | UndoResult;

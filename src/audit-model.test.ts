@@ -74,6 +74,7 @@ describe('auditNodes', () => {
                 format: 'webp',
                 savedBytes: 52_600,
                 replacesOriginal: true,
+                inPublicDir: false,
               },
             ],
           },

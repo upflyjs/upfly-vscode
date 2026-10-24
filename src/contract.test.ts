@@ -20,7 +20,7 @@ import { Ajv } from 'ajv';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
 import { auditNodes } from './audit-model.js';
-import type { AuditResult, RefsResult } from './contract.js';
+import type { AuditResult, OptimizeResult, RefsResult, UndoResult } from './contract.js';
 import { refsNodes } from './refs-model.js';
 import { renderReport } from './report.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
@@ -36,7 +36,13 @@ for (const file of readdirSync(path.join(CLI, 'schema'))) {
 
 /** The test's own Node.js, standing in for the editor's, running the published CLI this repository depends on. */
 const ENGINE: Engine = {
-  node: { kind: 'system', execPath: process.execPath, version: process.versions.node, env: {} },
+  node: {
+    kind: 'system',
+    execPath: process.execPath,
+    version: process.versions.node,
+    // The copies sit in the temporary folder, which may be inside a git repository of its own.
+    env: { GIT_CEILING_DIRECTORIES: tmpdir() },
+  },
   cliBin: path.join(CLI, 'bin', 'upfly.cjs'),
 };
 
@@ -100,6 +106,33 @@ describe('the runner on the real CLI', () => {
     expect(refsNodes(result)[1]?.children?.length).toBe(result.references.length);
   });
 
+  it("reads optimize's plan, the applied run and undo's list, each as its schema describes it", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-optimize-'));
+    try {
+      cpSync(FIXTURE, folder, { recursive: true });
+      const plan = await run({ command: 'optimize', args: ['--public', '.'], cwd: folder });
+      const applied = await run({
+        command: 'optimize',
+        args: ['--public', '.', '--apply', '--allow-dirty'],
+        cwd: folder,
+      });
+      const listed = await run({ command: 'undo', args: ['--list'], cwd: folder });
+      const undone = await run({ command: 'undo', args: [], cwd: folder });
+      expect([plan.kind, applied.kind, listed.kind, undone.kind]).toEqual([
+        'result',
+        'result',
+        'result',
+        'result',
+      ]);
+      const listedRun = listed.kind === 'result' ? (listed.result as UndoResult).run : null;
+      expect(listedRun?.id).toBe(
+        applied.kind === 'result' ? (applied.result as OptimizeResult).run?.id : undefined,
+      );
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
   it('ends as stopped, with exit code 2, for an image the project does not have', async () => {
     const outcome = await run({ command: 'refs', args: ['no/such.png'], cwd: project });
     expect(outcome.kind === 'stopped' && outcome.error.exitCode).toBe(2);
@@ -114,6 +147,47 @@ describe('the runner on the real CLI', () => {
         3,
         'V2_EXTENSION_CONFIG',
       ]);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a folder holding a code config under --no-code-config, exit 3, without running it', async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-no-code-'));
+    const mark = path.join(folder, 'config-ran.txt');
+    try {
+      writeFileSync(path.join(folder, 'upfly.config.mjs'), MARKING_CONFIG);
+      const marking: Engine = { ...ENGINE, node: { ...ENGINE.node, env: { UPFLY_MARK: mark } } };
+      const outcome = await startRun(marking, {
+        command: 'audit',
+        args: ['--no-code-config'],
+        cwd: folder,
+      }).outcome;
+      expect(outcome.kind === 'stopped' && [outcome.error.exitCode, outcome.error.reason]).toEqual([
+        3,
+        'CODE_CONFIG_NOT_RUN',
+      ]);
+      expect(existsSync(mark)).toBe(false);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('still reads upfly.config.json under --no-code-config, since it is data', async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-json-config-'));
+    try {
+      cpSync(FIXTURE, folder, { recursive: true });
+      writeFileSync(
+        path.join(folder, 'upfly.config.json'),
+        JSON.stringify({
+          $schema: './node_modules/upfly/schema/config.json',
+          publicDirs: ['images'],
+        }),
+      );
+      const outcome = await run({ command: 'audit', args: ['--no-code-config'], cwd: folder });
+      expect(
+        outcome.kind === 'result' && (outcome.result as AuditResult).report.coverage.servingRoots,
+      ).toEqual({ dirs: ['images'], declared: true });
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

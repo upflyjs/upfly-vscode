@@ -31,13 +31,17 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.equal(vscode.workspace.isTrusted, false);
   });
 
-  it('does not read a folder whose config would run code, says why, and reads the other', async () => {
+  it('lets the CLI refuse a folder whose config would run code, says why, and reads the other', async () => {
     const outcomes = await vscode.commands.executeCommand('upfly.auditWorkspace');
     assert.deepEqual(
-      outcomes.map((outcome) => [path.basename(outcome.folder), outcome.kind]),
+      outcomes.map((outcome) => [
+        path.basename(outcome.folder),
+        outcome.kind,
+        outcome.error?.reason ?? null,
+      ]),
       [
-        ['plain-html', 'unavailable'],
-        ['eleventy', 'result'],
+        ['plain-html', 'stopped', 'CODE_CONFIG_NOT_RUN'],
+        ['eleventy', 'result', null],
       ],
     );
     const plain = api.auditRows().find((/** @type {any} */ entry) => entry.label === 'plain-html');
@@ -50,7 +54,7 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
   it('does not search that folder for an image either', async () => {
     const image = vscode.Uri.joinPath(folder(0).uri, 'images', 'logo.png');
     const outcome = await vscode.commands.executeCommand('upfly.whereUsed', image);
-    assert.equal(outcome.kind, 'unavailable');
+    assert.equal(outcome.error?.reason, 'CODE_CONFIG_NOT_RUN');
   });
 
   it('never ran the config', () => {

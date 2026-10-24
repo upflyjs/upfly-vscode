@@ -1,45 +1,47 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { CONFIG_FILES } from '../node_modules/upfly/dist/config.js';
-import { CODE_CONFIG_FILES, untrustedRefusal } from './trust.js';
+import { describe, expect, it } from 'vitest';
+import type { ErrorLine } from './contract.js';
+import { codeConfigRefusal, trustArgs } from './trust.js';
 
-const made: string[] = [];
-
-function project(...files: string[]): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-trust-'));
-  made.push(dir);
-  for (const file of files) writeFileSync(path.join(dir, file), '');
-  return dir;
-}
-
-afterEach(() => {
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+const refusal = (message: string, reason = 'CODE_CONFIG_NOT_RUN'): ErrorLine => ({
+  type: 'error',
+  command: 'audit',
+  exitCode: 3,
+  reason,
+  message,
 });
 
-describe('CODE_CONFIG_FILES', () => {
-  it('names every config file the CLI loads by running it, and no other', () => {
-    expect(CODE_CONFIG_FILES).toEqual(CONFIG_FILES.filter((file) => file !== 'upfly.config.json'));
+describe('trustArgs', () => {
+  it('adds nothing in a trusted workspace', () => {
+    expect(trustArgs(true)).toEqual([]);
+  });
+
+  it('tells the CLI to run no code config in an untrusted one', () => {
+    expect(trustArgs(false)).toEqual(['--no-code-config']);
   });
 });
 
-describe('untrustedRefusal', () => {
-  it('lets a trusted workspace run whatever config it has', () => {
-    expect(untrustedRefusal(project('upfly.config.ts'), true)).toBeNull();
-  });
-
-  it('lets an untrusted folder run when its only config is JSON, which is data', () => {
-    expect(untrustedRefusal(project('upfly.config.json'), false)).toBeNull();
-  });
-
-  it('lets an untrusted folder with no config run', () => {
-    expect(untrustedRefusal(project(), false)).toBeNull();
-  });
-
-  it('refuses an untrusted folder whose config would run its code, and names the file', () => {
-    expect(untrustedRefusal(project('upfly.config.mjs'), false)).toBe(
+describe('codeConfigRefusal', () => {
+  it('says in editor terms why the folder was not read, naming the config the CLI named', () => {
+    expect(
+      codeConfigRefusal(
+        refusal(
+          'upfly.config.mjs is a config written as code, and --no-code-config says to run no code from the project, so it was not read and nothing was done.',
+        ),
+      ),
+    ).toBe(
       'This workspace is not trusted, and reading upfly.config.mjs would run code from the project. Trust the workspace to let Upfly read this folder.',
+    );
+  });
+
+  it('still says why when the message names no file it recognises', () => {
+    expect(codeConfigRefusal(refusal('A config written as code was not run.'))).toBe(
+      'This workspace is not trusted, and reading its config would run code from the project. Trust the workspace to let Upfly read this folder.',
+    );
+  });
+
+  it('leaves every other stop to its own message', () => {
+    expect(codeConfigRefusal(refusal('Another run is in progress.', 'TRANSACTION_LOCKED'))).toBe(
+      null,
     );
   });
 });

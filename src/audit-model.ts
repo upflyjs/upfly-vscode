@@ -1,7 +1,6 @@
 /**
  * The audit tree's content, built from the result of `upfly audit --json` as plain objects,
- * so what the tree says can be tested without VS Code. `audit-view.ts` turns these into tree
- * items.
+ * so what the tree says can be tested without VS Code. `tree.ts` turns these into tree items.
  */
 
 import type { AuditResult, Conversion, Finding, Report, UnsafeReference } from './contract.js';

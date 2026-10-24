@@ -14,7 +14,7 @@ import {
   projectCliVersion,
   versionNotice,
 } from './bundled-cli.js';
-import type { AuditResult, CommandName, RefsResult } from './contract.js';
+import type { AuditResult, CommandName, ErrorLine, RefsResult } from './contract.js';
 import { openLocation } from './locations.js';
 import { type NodeRuntime, chooseNode, nodeOnPath, versionOf } from './node-runtime.js';
 import { progressText } from './progress-text.js';
@@ -22,7 +22,7 @@ import { refsNodes } from './refs-model.js';
 import { renderReport } from './report.js';
 import { type RunHandle, type RunOutcome, startRun } from './runner.js';
 import { NodeTree, type ViewNode, viewNodes } from './tree.js';
-import { untrustedRefusal } from './trust.js';
+import { codeConfigRefusal, trustArgs } from './trust.js';
 
 const IMAGE_GLOB = '**/*.{avif,gif,jpeg,jpg,png,svg,tif,tiff,webp}';
 const REPORT_SCHEME = 'upfly-report';
@@ -43,6 +43,8 @@ export interface FolderOutcome {
   readonly folder: string;
   readonly kind: RunOutcome['kind'] | 'unavailable';
   readonly result?: AuditResult | RefsResult;
+  /** The CLI's error line, when it stopped. */
+  readonly error?: ErrorLine;
 }
 
 /** What the extension exports: read by its own tests, not a public API. */
@@ -142,9 +144,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     label: string,
   ): Promise<RunOutcome | { kind: 'unavailable'; message: string }> {
     if ('message' in chosen) return { kind: 'unavailable', message: chosen.message };
-    const refusal = untrustedRefusal(folder.uri.fsPath, vscode.workspace.isTrusted);
-    if (refusal !== null) return { kind: 'unavailable', message: refusal };
-    log.info(`upfly ${command} ${args.join(' ')} --json, in ${folder.uri.fsPath}`);
+    const all = [...args, ...trustArgs(vscode.workspace.isTrusted)];
+    log.info(`upfly ${command} ${all.join(' ')} --json, in ${folder.uri.fsPath}`);
     status.text = `$(sync~spin) Upfly: ${label}`;
     status.show();
     await vscode.commands.executeCommand('setContext', 'upfly.running', true);
@@ -154,7 +155,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
           { node: chosen.node, cliBin: chosen.cli.bin },
           {
             command,
-            args,
+            args: all,
             cwd: folder.uri.fsPath,
             onProgress: (line) => {
               status.text = `$(sync~spin) Upfly: ${progressText(line)}`;
@@ -246,11 +247,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         showAudits();
         const outcome = await runIn(chosen, folder, 'audit', [], 'upfly.audit', label);
         audits.set(key, auditState(outcome, folder));
-        outcomes.push({
-          folder: folder.uri.fsPath,
-          kind: outcome.kind,
-          ...(outcome.kind === 'result' ? { result: outcome.result } : {}),
-        });
+        outcomes.push(folderOutcome(folder, outcome));
         showAudits();
         reportChanged.fire(reportUri(folder));
       }
@@ -275,8 +272,12 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
           notice,
         };
       }
-      case 'stopped':
-        return { kind: 'message', text: outcome.error.message, icon: 'warning' };
+      case 'stopped': {
+        const untrusted = codeConfigRefusal(outcome.error);
+        return untrusted === null
+          ? { kind: 'message', text: outcome.error.message, icon: 'warning' }
+          : { kind: 'message', text: untrusted, icon: 'shield' };
+      }
       case 'crashed':
         return { kind: 'message', text: outcome.message, icon: 'error' };
       case 'cancelled':
@@ -321,11 +322,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         `searching for ${path.basename(relative)}`,
       );
       refsTree.show(viewNodes(refsRowsFor(outcome), folder.uri));
-      return {
-        folder: folder.uri.fsPath,
-        kind: outcome.kind,
-        ...(outcome.kind === 'result' ? { result: outcome.result } : {}),
-      };
+      return folderOutcome(folder, outcome);
     });
   }
 
@@ -423,6 +420,19 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
 /** Called by VS Code when the extension stops; everything is disposed through the context. */
 export function deactivate(): void {}
 
+/** What a command's run in one folder gives back to the extension's tests. */
+function folderOutcome(
+  folder: vscode.WorkspaceFolder,
+  outcome: RunOutcome | { kind: 'unavailable'; message: string },
+): FolderOutcome {
+  return {
+    folder: folder.uri.fsPath,
+    kind: outcome.kind,
+    ...(outcome.kind === 'result' ? { result: outcome.result as AuditResult | RefsResult } : {}),
+    ...(outcome.kind === 'stopped' ? { error: outcome.error } : {}),
+  };
+}
+
 /** The workspace folders on disk; a virtual folder has no files the CLI could read. */
 function fileFolders(): readonly vscode.WorkspaceFolder[] {
   return (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file');
@@ -448,8 +458,12 @@ function refsRowsFor(outcome: RunOutcome | { kind: 'unavailable'; message: strin
   switch (outcome.kind) {
     case 'result':
       return refsNodes(outcome.result as RefsResult);
-    case 'stopped':
-      return [{ label: outcome.error.message, tooltip: outcome.error.message, icon: 'warning' }];
+    case 'stopped': {
+      const text = codeConfigRefusal(outcome.error) ?? outcome.error.message;
+      return [
+        { label: text, tooltip: text, icon: text === outcome.error.message ? 'warning' : 'shield' },
+      ];
+    }
     case 'crashed':
       return [{ label: outcome.message, tooltip: outcome.detail, icon: 'error' }];
     case 'cancelled':
