@@ -73,13 +73,15 @@ describe('noticeText', () => {
     expect(text).not.toContain('does not convert new images');
   });
 
-  it('is off in this build, which does not convert new images as they arrive', () => {
-    expect(CONVERTS_NEW_IMAGES).toBe(false);
+  it('is on in this build, which converts new images as they arrive', () => {
+    expect(CONVERTS_NEW_IMAGES).toBe(true);
   });
 });
 
 describe('whatsNew', () => {
-  const today = whatsNew({ convertsNewImages: false, settings: [], oldConfigs: [] });
+  const none = { removesOriginals: false, settings: [], oldConfigs: [] };
+  const today = whatsNew({ ...none, convertsNewImages: false });
+  const now = whatsNew({ ...none, convertsNewImages: true });
 
   it('says upload comes back later, and how to keep the old extension meanwhile', () => {
     expect(today).toContain(
@@ -99,13 +101,37 @@ describe('whatsNew', () => {
   });
 
   it('says new images are converted again once this build does', () => {
-    const later = whatsNew({ convertsNewImages: true, settings: [], oldConfigs: [] });
-    expect(later).toContain('converted automatically');
-    expect(later).not.toContain('does not convert new images');
+    expect(now).toContain('converted automatically');
+    expect(now).not.toContain('does not convert new images');
+  });
+
+  it('says which folders are watched without a watch part, how to name others or none, and how to leave one out', () => {
+    expect(now).toContain(
+      `- Without a watch part in the project's upfly.config.json, every folder named public is watched, as the old extension's default was. "watch": { "folders": ["static"] } names the folders to watch instead, and an empty list watches none. To leave one folder out, right-click it and choose Stop watching this folder.`,
+    );
+  });
+
+  it('says a paste keeps only its WebP and an image from outside keeps its original, and what removes it', () => {
+    const paste =
+      '- An image you paste or drop in the Explorer keeps only its WebP. One that arrives from outside the editor, such as an image an agent or a download wrote, keeps its original beside the WebP, since a line written later may still name it.';
+    expect(now).toContain(
+      `${paste} The status bar counts these originals; removing them from the editor comes with a later version of Upfly.`,
+    );
+    expect(whatsNew({ ...none, convertsNewImages: true, removesOriginals: true })).toContain(
+      `${paste} Upfly removes that original once a line names the WebP and none names the original, and the count of originals kept, in the status bar, removes them all on a click.`,
+    );
+  });
+
+  it("says watched folders and keeping originals moved into the project's config", () => {
+    expect(now).toContain(
+      "- Watched folders and keeping originals are set for each project, in the watch part of its upfly.config.json. The old extension's settings for them no longer do anything.",
+    );
+    expect(today).not.toContain('Watched folders and keeping originals are set');
   });
 
   it('lists each old setting where it is set', () => {
     const text = whatsNew({
+      ...none,
       convertsNewImages: false,
       settings: [
         { key: 'upfly.watchTargets', scope: 'user' },
@@ -120,7 +146,7 @@ describe('whatsNew', () => {
   });
 
   it("names the folders whose upfly.config.json is the old extension's", () => {
-    const text = whatsNew({ convertsNewImages: false, settings: [], oldConfigs: ['site'] });
+    const text = whatsNew({ ...none, convertsNewImages: false, oldConfigs: ['site'] });
     expect(text).toContain(
       'Upfly 3 does not read an upfly.config.json written for the old extension, so Upfly stops before reading these folders: site.',
     );

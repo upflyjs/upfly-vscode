@@ -72,7 +72,7 @@ describe("the old extension's users, on the first start after the update", funct
 
   it('shows one notice, every sentence of it true of this build', () => {
     assert.deepEqual(api.notices(), [
-      "Upfly is rebuilt on Upfly 3. It converts the images you choose and updates the code that uses them, with a plan first and Undo after. This version does not convert new images as they arrive: right-click them and choose Optimize. The old extension's settings no longer do anything.",
+      "Upfly is rebuilt on Upfly 3. It converts the images you choose and updates the code that uses them, with a plan first and Undo after. New images in a watched folder are still converted automatically, now with the code that uses them updated, and images a git pull brings in are left alone. The old extension's settings no longer do anything.",
     ]);
   });
 
@@ -99,12 +99,16 @@ describe("the old extension's users, on the first start after the update", funct
       '- upfly.watchTargets, in your user settings',
       "- upfly.quality, in this workspace's settings",
       '- upfly.storageMode, in the settings of site',
-      '- This version does not convert new images as they arrive. Right-click them and choose Optimize.',
+      '- New images in a watched folder are still converted automatically, now with the code that uses them updated, and images a git pull brings in are left alone.',
+      "- Watched folders and keeping originals are set for each project, in the watch part of its upfly.config.json. The old extension's settings for them no longer do anything.",
+      api.originals.canRemove()
+        ? 'the count of originals kept, in the status bar, removes them all on a click.'
+        : 'removing them from the editor comes with a later version of Upfly.',
     ]) {
       assert.ok(text.includes(line), line);
     }
     assert.match(text, /so Upfly stops before reading these folders: site\./);
-    assert.doesNotMatch(text, /converted automatically/);
+    assert.doesNotMatch(text, /does not convert new images/);
     assert.deepEqual(await lensTitles(document.uri), [
       'Remove the old settings',
       'Convert upfly.config.json in site',

@@ -2,6 +2,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { UPFLY_SCHEMA, convertOldConfig } from './convert-config.js';
+import { JSON_CONFIG_FILE } from './project-config.js';
+import { keepsOriginals } from './watch-batch.js';
+import { watchSettings } from './watch-config.js';
+import { isWatched } from './watch-paths.js';
 
 describe('UPFLY_SCHEMA', () => {
   it('is the $schema the carried CLI takes for its own config', async () => {
@@ -169,5 +173,32 @@ describe('convertOldConfig', () => {
     expect(text).toBe(
       `{\n  "$schema": "./node_modules/upfly/schema/config.json",\n  "watch": {\n    "folders": [\n      "public"\n    ]\n  }\n}\n`,
     );
+  });
+});
+
+describe('the converted config, as the watcher reads it', () => {
+  const settingsOf = (text: string) =>
+    watchSettings({ exists: (file) => file === JSON_CONFIG_FILE, read: () => text });
+
+  it('watches the folders the old file watched, and keeps originals when it kept them', () => {
+    const { text } = convertOldConfig({ ...TEMPLATE, inPlaceKeepOriginal: true }, [
+      'apps/web/public',
+      'public',
+    ]);
+    const settings = settingsOf(text);
+    expect([settings.config, settings.folders, settings.keepOriginals]).toEqual([
+      'json',
+      ['apps/web/public', 'public'],
+      true,
+    ]);
+    expect(isWatched('apps/web/public/hero.png', settings)).toBe(true);
+    expect(isWatched('src/hero.png', settings)).toBe(false);
+    expect(keepsOriginals('paste', settings)).toBe(true);
+  });
+
+  it('watches nothing when the old file turned watching off', () => {
+    const settings = settingsOf(convertOldConfig({ ...TEMPLATE, enabled: false }, ['public']).text);
+    expect(settings.folders).toEqual([]);
+    expect(isWatched('public/hero.png', settings)).toBe(false);
   });
 });

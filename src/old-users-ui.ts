@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import type { AgentsPart } from './agents-ui.js';
+import { findBundledCli, removesOriginals } from './bundled-cli.js';
 import { convertOldConfig } from './convert-config.js';
 import type { Host } from './host.js';
 import { keepOldCopy, projectFolders } from './old-config-files.js';
@@ -73,6 +74,8 @@ export function registerOldUsers(
   const lensesChanged = new vscode.EventEmitter<void>();
   const problems = vscode.languages.createDiagnosticCollection('upfly-old-config');
   let settle: NodeJS.Timeout | undefined;
+  const cli = findBundledCli(context.extensionPath);
+  const removes = cli !== null && removesOriginals(cli);
 
   /** Looks again for old settings and configs, and updates every place that shows them. */
   function update(): void {
@@ -305,6 +308,7 @@ export function registerOldUsers(
         converted.get(uri.toString()) ??
         whatsNew({
           convertsNewImages: CONVERTS_NEW_IMAGES,
+          removesOriginals: removes,
           settings: oldSettings(),
           oldConfigs: oldConfigFolders().map((folder) => folder.name),
         }),
