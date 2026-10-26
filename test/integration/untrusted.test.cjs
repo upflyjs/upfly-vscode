@@ -126,6 +126,20 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
     assert.equal(existsSync(path.join(served, 'arrived.png')), true);
   });
 
+  it('counts and removes no kept original there, and says why when asked to', async () => {
+    assert.equal(api.originals.statusBar(), null);
+    const before = api.refusals().length;
+    await vscode.commands.executeCommand('upfly.removeOriginals');
+    if (api.originals.canRemove()) {
+      assert.match(
+        String(api.refusals().at(-1)),
+        /^This workspace is not trusted, so Upfly changes no file in it\./,
+      );
+      assert.equal(api.refusals().length, before + 1);
+    }
+    assert.deepEqual(api.originals.runs(), []);
+  });
+
   it('never ran the config', () => {
     assert.equal(existsSync(String(process.env.UPFLY_MARK)), false);
   });

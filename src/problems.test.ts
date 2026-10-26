@@ -28,6 +28,7 @@ describe('brokenProblems', () => {
         start: 10,
         end: 39,
         message: 'No file is at images/missing-on-purpose.png, which this line names as an image.',
+        written: 'images/missing-on-purpose.png',
       },
     ]);
   });
@@ -53,6 +54,7 @@ describe('brokenProblems', () => {
   it('marks the start of the line when the path is not on it as written', () => {
     const [problem] = brokenProblems([broken({ rawPath: 'elsewhere.png' })], textOf);
     expect([problem?.line, problem?.start, problem?.end]).toEqual([1, 0, 0]);
+    expect(problem?.written).toBeNull();
   });
 
   it('marks the top of a file it cannot read', () => {

@@ -24,7 +24,7 @@ import {
 import { CODE_CONFIG_FILES, JSON_CONFIG_FILE } from './project-config.js';
 import { type StepAction, nextStep } from './refusals.js';
 import { codeConfigRefusal } from './trust.js';
-import { type WaitingOriginal, WaitingOriginals } from './waiting.js';
+import type { Kept, WaitingOriginal, WaitingOriginals } from './waiting.js';
 import {
   type BatchReport,
   argumentGroups,
@@ -100,12 +100,16 @@ const PROBLEM_SOURCE = 'Upfly';
  * Registers the watcher: it starts at once in a trusted workspace, and when trust is granted
  * otherwise.
  *
- * @param context the extension's context, whose workspace state keeps the waiting originals
+ * @param context the extension's context
  * @param host the shared runner and log
+ * @param waiting the originals kept for coming from outside the editor, waiting to be removed
  */
-export function registerWatch(context: vscode.ExtensionContext, host: Host): WatchPart {
+export function registerWatch(
+  context: vscode.ExtensionContext,
+  host: Host,
+  waiting: WaitingOriginals,
+): WatchPart {
   const problems = vscode.languages.createDiagnosticCollection('upfly-new-images');
-  const waiting = new WaitingOriginals(context.workspaceState);
   const decisions: Decision[] = [];
   const runs: WatchRun[] = [];
   const asked: string[] = [];
@@ -397,9 +401,20 @@ export function registerWatch(context: vscode.ExtensionContext, host: Host): Wat
       vscode.window.setStatusBarMessage(`Upfly: ${text}`, 5_000);
     }
     if (report.waiting.length > 0) {
+      const root = folder.uri.fsPath;
       void waiting.add(
         folder.uri.toString(),
-        report.waiting.map((done) => ({ original: done.image, converted: done.target })),
+        report.waiting.map((done): Kept => {
+          // As the run left them, so a later edit of either can be told.
+          const originalStamp = look(root, done.image);
+          const convertedStamp = look(root, done.target);
+          return {
+            original: done.image,
+            converted: done.target,
+            ...(originalStamp === null ? {} : { originalStamp }),
+            ...(convertedStamp === null ? {} : { convertedStamp }),
+          };
+        }),
       );
     }
   }

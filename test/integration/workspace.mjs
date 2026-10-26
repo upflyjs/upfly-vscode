@@ -162,7 +162,7 @@ export async function watchWorkspace(root, fixtures) {
     const image = file.endsWith('.jpg') ? noise.jpeg({ quality: 95 }) : noise.png();
     writeFileSync(file, await image.toBuffer());
   };
-  for (const name of ['pasted.png', 'outside.png', 'skipped.png']) {
+  for (const name of ['pasted.png', 'outside.png', 'skipped.png', 'named.png', 'late.png']) {
     await make(path.join(root, 'stock', name));
   }
   for (let index = 1; index <= 51; index += 1) {

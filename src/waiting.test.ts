@@ -59,5 +59,49 @@ describe('WaitingOriginals', () => {
     expect(new WaitingOriginals(store({ [WAITING_KEY]: [entry] })).all()).toEqual([entry]);
     expect(new WaitingOriginals(store({ [WAITING_KEY]: 'nonsense' })).all()).toEqual([]);
     expect(new WaitingOriginals(store({ [WAITING_KEY]: [{ folder: SITE }] })).all()).toEqual([]);
+    const badStamp = { ...entry, originalStamp: { size: 'big' } };
+    expect(new WaitingOriginals(store({ [WAITING_KEY]: [badStamp] })).all()).toEqual([]);
+  });
+
+  it('keeps the size and time of the original and of its converted image', async () => {
+    const waiting = new WaitingOriginals(store(), () => new Date(0));
+    await waiting.add(SITE, [
+      {
+        original: 'public/a.png',
+        converted: 'public/a.webp',
+        originalStamp: { size: 100, mtimeMs: 1 },
+        convertedStamp: { size: 20, mtimeMs: 2 },
+      },
+    ]);
+    expect(waiting.all()[0]).toMatchObject({
+      originalStamp: { size: 100, mtimeMs: 1 },
+      convertedStamp: { size: 20, mtimeMs: 2 },
+    });
+  });
+
+  it('records why an original stayed, and clears it', async () => {
+    const waiting = new WaitingOriginals(store(), () => new Date(0));
+    await waiting.add(SITE, [{ original: 'public/a.png', converted: 'public/a.webp' }]);
+    await waiting.note(SITE, [{ original: 'public/a.png', reason: 'a page still uses it' }]);
+    expect(waiting.all()[0]?.reason).toBe('a page still uses it');
+    await waiting.note(SITE, [{ original: 'public/a.png', reason: null }]);
+    expect(waiting.all()[0]).not.toHaveProperty('reason');
+  });
+
+  it('tells its listeners of each change, and only of a change', async () => {
+    const waiting = new WaitingOriginals(store(), () => new Date(0));
+    let calls = 0;
+    const listening = waiting.onChange(() => {
+      calls += 1;
+    });
+    await waiting.add(SITE, [{ original: 'public/a.png', converted: 'public/a.webp' }]);
+    await waiting.note(SITE, [{ original: 'public/a.png', reason: 'kept' }]);
+    await waiting.note(SITE, [{ original: 'public/a.png', reason: 'kept' }]);
+    await waiting.remove(SITE, ['public/other.png']);
+    await waiting.remove(SITE, ['public/a.png']);
+    expect(calls).toBe(3);
+    listening.dispose();
+    await waiting.add(SITE, [{ original: 'public/b.png', converted: 'public/b.webp' }]);
+    expect(calls).toBe(3);
   });
 });

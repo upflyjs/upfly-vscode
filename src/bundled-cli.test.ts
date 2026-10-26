@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findBundledCli, findBundledMcp, projectCliVersion, versionNotice } from './bundled-cli.js';
+import {
+  findBundledCli,
+  findBundledMcp,
+  projectCliVersion,
+  removesOriginals,
+  versionNotice,
+} from './bundled-cli.js';
 
 const made: string[] = [];
 
@@ -48,6 +54,28 @@ describe('findBundledCli', () => {
 
   it('finds nothing in a folder that carries no CLI', () => {
     expect(findBundledCli(folder())).toBeNull();
+  });
+});
+
+describe('removesOriginals', () => {
+  /** A CLI whose optimize schema has the given definitions, or none at all. */
+  function cliWith(definitions: Record<string, unknown> | null) {
+    const dir = folder();
+    writePackage(dir, 'upfly', '3.3.0');
+    if (definitions !== null) {
+      mkdirSync(path.join(dir, 'schema'));
+      writeFileSync(path.join(dir, 'schema', 'optimize.json'), JSON.stringify({ definitions }));
+    }
+    return { version: '3.3.0', bin: path.join(dir, 'bin', 'upfly.cjs') };
+  }
+
+  it('tells a CLI whose optimize schema describes a removal, whatever its version says', () => {
+    expect(removesOriginals(cliWith({ removal: { type: 'object' }, rewrite: {} }))).toBe(true);
+  });
+
+  it('tells a CLI without one, or without the schema, cannot', () => {
+    expect(removesOriginals(cliWith({ rewrite: {} }))).toBe(false);
+    expect(removesOriginals(cliWith(null))).toBe(false);
   });
 });
 

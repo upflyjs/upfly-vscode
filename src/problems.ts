@@ -15,6 +15,8 @@ export interface Problem {
   readonly start: number;
   readonly end: number;
   readonly message: string;
+  /** The path as written, when the entry covers it on its line; null when it is not found there. */
+  readonly written: string | null;
 }
 
 /**
@@ -32,7 +34,9 @@ export function brokenProblems(
     if (finding.kind !== 'broken') continue;
     const message = `No file is at ${finding.rawPath}, which this line names as an image.${finding.note === undefined ? '' : ` ${finding.note}`}`;
     const lines = textOf(finding.file)?.split('\n') ?? null;
-    problems.push({ file: finding.file, message, ...place(lines, finding.line, finding.rawPath) });
+    const placed = place(lines, finding.line, finding.rawPath);
+    const written = placed.end > placed.start ? finding.rawPath : null;
+    problems.push({ file: finding.file, message, ...placed, written });
   }
   return problems;
 }

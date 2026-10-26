@@ -26,6 +26,24 @@ export function findBundledCli(extensionPath: string): BundledCli | null {
   return findCarried(extensionPath, 'upfly', path.join('bin', 'upfly.cjs'));
 }
 
+/**
+ * Whether the CLI can remove an original kept beside its converted image, which
+ * `optimize --remove-originals` does: its optimize schema describes a removal. The version
+ * number cannot tell, since a build can carry the flag before the release that names it.
+ *
+ * @param cli the carried CLI
+ */
+export function removesOriginals(cli: BundledCli): boolean {
+  const schema = path.join(path.dirname(path.dirname(cli.bin)), 'schema', 'optimize.json');
+  try {
+    const value: unknown = JSON.parse(readFileSync(schema, 'utf8'));
+    const definitions = (value as { definitions?: Record<string, unknown> }).definitions;
+    return typeof definitions?.removal === 'object' && definitions.removal !== null;
+  } catch {
+    return false;
+  }
+}
+
 /** The carried MCP server: its version and its entry point. */
 export interface BundledMcp {
   readonly version: string;

@@ -201,6 +201,20 @@ export interface Plan {
   }[];
   /** Converted images whose original stays anyway, and why. */
   readonly keptOriginals: readonly { readonly asset: string; readonly reason: string }[];
+  /**
+   * With `--remove-originals`, each original named with `--image` that the run removes; absent
+   * from a CLI that cannot remove originals, and empty on a run that converts.
+   */
+  readonly removals?: readonly Removal[];
+}
+
+/** An original kept beside its converted file, which a run removes. */
+export interface Removal {
+  readonly asset: string;
+  /** The converted file beside it, which takes its place. */
+  readonly converted: string;
+  /** The original sits in a folder the site is served from, where an outside link can name it. */
+  readonly inPublicDir: boolean;
 }
 
 /** The last line of `upfly optimize --json`, a dry run or an applied one. */

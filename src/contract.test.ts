@@ -12,6 +12,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,7 @@ import { MARKING_CONFIG } from '../test/integration/config-mark.mjs';
 import { OLD_CONFIG } from '../test/integration/workspace.mjs';
 import { agentsReport } from './agents.js';
 import { auditNodes } from './audit-model.js';
+import { removesOriginals } from './bundled-cli.js';
 import type {
   AuditResult,
   InitResult,
@@ -35,7 +37,9 @@ import { projectFolders } from './old-config-files.js';
 import { onlyPattern } from './plan-model.js';
 import { readConfigText } from './project-config.js';
 import { refsNodes } from './refs-model.js';
+import { removableOnOpen, removalArgs, removalOutcome } from './removal.js';
 import { type Engine, type RunOutcome, type RunRequest, startRun } from './runner.js';
+import type { WaitingOriginal } from './waiting.js';
 
 const CLI = fileURLToPath(new URL('../node_modules/upfly/', import.meta.url));
 const FIXTURE = fileURLToPath(new URL('../test/fixtures/plain-html/', import.meta.url));
@@ -153,6 +157,81 @@ describe('the runner on the real CLI', () => {
       rmSync(folder, { recursive: true, force: true });
     }
   });
+
+  // The CLI the extension carries today cannot remove originals; a build that can runs this.
+  it.skipIf(!removesOriginals({ version: '', bin: ENGINE.cliBin }))(
+    'removes a kept original a line no longer needs, and keeps the one a page names, with its reason',
+    async () => {
+      const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-remove-'));
+      try {
+        cpSync(FIXTURE, folder, { recursive: true });
+        const images = path.join(folder, 'images');
+        for (const name of ['arrived.png', 'named.png']) {
+          cpSync(path.join(images, 'logo.png'), path.join(images, name));
+        }
+        const kept = await run({
+          command: 'optimize',
+          args: [
+            '--public',
+            '.',
+            ...['--apply', '--allow-dirty', '--no-undo', '--keep-originals'],
+            ...['--image', 'images/arrived.png', '--image', 'images/named.png'],
+          ],
+          cwd: folder,
+        });
+        expect(kept.kind).toBe('result');
+        const page = path.join(folder, 'index.html');
+        const lines = '<img src="images/arrived.webp"><img src="images/named.png">\n';
+        writeFileSync(page, `${readFileSync(page, 'utf8')}${lines}`);
+        const stamp = (relative: string) => {
+          try {
+            const stats = statSync(path.join(folder, relative));
+            return { size: stats.size, mtimeMs: stats.mtimeMs };
+          } catch {
+            return null;
+          }
+        };
+        const waiting: WaitingOriginal[] = ['arrived', 'named', 'gone'].map((name) => ({
+          folder: 'file:///project',
+          original: `images/${name}.png`,
+          converted: `images/${name}.webp`,
+          since: '2026-10-26T10:00:00.000Z',
+        }));
+        const originals = waiting.map((entry) => entry.original);
+
+        const planned = await run({
+          command: 'optimize',
+          args: ['--public', '.', ...removalArgs(originals, false)],
+          cwd: folder,
+        });
+        expect(planned.kind).toBe('result');
+        const plan = (planned as Extract<RunOutcome, { kind: 'result' }>).result as OptimizeResult;
+        const before = removalOutcome(waiting, plan, stamp);
+        expect(before.removable).toEqual(['images/arrived.png']);
+        expect(before.staying.map((entry) => entry.original)).toEqual(['images/named.png']);
+        expect(before.staying[0]?.reason).toMatch(/`index\.html` names it/);
+        expect(before.dropped.map((entry) => entry.original)).toEqual(['images/gone.png']);
+        expect(removableOnOpen(plan)).toEqual(['images/arrived.png']);
+
+        const applied = await run({
+          command: 'optimize',
+          args: ['--public', '.', ...removalArgs(['images/arrived.png'], true)],
+          cwd: folder,
+        });
+        expect(applied.kind).toBe('result');
+        const result = (applied as Extract<RunOutcome, { kind: 'result' }>)
+          .result as OptimizeResult;
+        expect(removalOutcome(waiting.slice(0, 1), result, stamp).removed).toEqual([
+          'images/arrived.png',
+        ]);
+        expect(existsSync(path.join(images, 'arrived.png'))).toBe(false);
+        expect(existsSync(path.join(images, 'arrived.webp'))).toBe(true);
+        expect(existsSync(path.join(folder, '.upfly', 'manifest.json'))).toBe(false);
+      } finally {
+        rmSync(folder, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("reads init --agents's result as its schema describes it, each file it lists written", async () => {
     const folder = mkdtempSync(path.join(tmpdir(), 'upfly-vscode-init-'));

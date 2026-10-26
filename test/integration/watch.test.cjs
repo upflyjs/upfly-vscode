@@ -7,7 +7,7 @@
  */
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { copyFileSync, existsSync, mkdirSync, readFileSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 const { parse } = require('jsonc-parser');
 const vscode = require('vscode');
@@ -213,5 +213,198 @@ describe('new images arriving in a watched folder', function () {
     const told = await vscode.commands.executeCommand('upfly.stopWatching', outside);
     assert.match(String(told), /^Upfly watches folders inside an open workspace folder only/);
     assert.equal(api.refusals().at(-1), told);
+  });
+});
+
+describe('the originals kept beside their converted image', function () {
+  this.timeout(180_000);
+  /** @type {any} */
+  let api;
+  /** @param {string} name @param {string} image */
+  const decision = (name, image) =>
+    api.watch
+      .decisions()
+      .filter((/** @type {any} */ entry) => entry.folder === name && entry.path === image)
+      .at(-1)?.outcome;
+  /** @param {string} image */
+  const waitingFor = (image) =>
+    api.watch.waiting().find((/** @type {any} */ entry) => entry.original === image);
+  /** @param {vscode.WorkspaceFolder} root @param {string} image */
+  const onDisk = (root, image) => existsSync(path.join(root.uri.fsPath, ...image.split('/')));
+  /** Writes an image from outside the editor, and waits until it is converted, its original kept. @param {string} name */
+  const arrive = async (name) => {
+    const vite = folder('vite');
+    const image = `public/photos/${name}`;
+    copyFileSync(stock(name), path.join(vite.uri.fsPath, ...image.split('/')));
+    await until(() => decision('vite', image) !== undefined, `${image} from outside`);
+    await api.watch.idle();
+    assert.equal(decision('vite', image), 'converted, original kept');
+    return image;
+  };
+  /** Adds lines to the vite folder's index.html in the editor, and saves it. @param {string} lines */
+  const saveLines = async (lines) => {
+    const page = vscode.Uri.joinPath(folder('vite').uri, 'index.html');
+    const document = await vscode.workspace.openTextDocument(page);
+    const edit = new vscode.WorkspaceEdit();
+    edit.insert(page, new vscode.Position(10, 0), lines);
+    assert.equal(await vscode.workspace.applyEdit(edit), true);
+    assert.equal(await document.save(), true);
+    return document;
+  };
+
+  before(async () => {
+    const extension = vscode.extensions.getExtension('ramin.upfly-vscode');
+    assert.ok(extension, 'the extension is there');
+    api = await extension.activate();
+  });
+
+  it('counts them in the status bar, removable on a click only when the CLI carried can', async () => {
+    await until(() => api.originals.statusBar() !== null, 'the count in the status bar');
+    const bar = api.originals.statusBar();
+    const folders = new Set(
+      (vscode.workspace.workspaceFolders ?? []).map((entry) => entry.uri.toString()),
+    );
+    const count = api.watch
+      .waiting()
+      .filter((/** @type {any} */ entry) => folders.has(entry.folder)).length;
+    assert.equal(bar.text, `$(files) Upfly: ${count} originals kept`);
+    assert.equal(bar.clickable, api.originals.canRemove());
+    if (!api.originals.canRemove()) {
+      assert.match(bar.tooltip, /Removing them comes with a later version of Upfly\./);
+    }
+  });
+
+  describe('with a CLI that removes them', () => {
+    before(function () {
+      if (!api.originals.canRemove()) {
+        console.log(
+          '      Skipped: the CLI this build carries cannot remove kept originals, so these run on one that can.',
+        );
+        this.skip();
+      }
+    });
+
+    it('removes the original once a page saved in the editor names its WebP', async () => {
+      const vite = folder('vite');
+      const image = 'public/photos/outside.png';
+      assert.ok(waitingFor(image), 'the original from outside waits');
+      await saveLines('    <img src="/photos/outside.webp" alt="From outside">\n');
+      await until(() => !onDisk(vite, image), 'the original removed');
+      await api.originals.idle();
+      assert.equal(onDisk(vite, 'public/photos/outside.webp'), true);
+      assert.equal(waitingFor(image), undefined);
+      assert.deepEqual(api.originals.runs().at(-1), {
+        folder: 'vite',
+        trigger: 'save',
+        apply: true,
+        originals: [image],
+      });
+    });
+
+    it('keeps the original a page still names, with the hint in the Problems panel and its quick fix', async () => {
+      const vite = folder('vite');
+      const image = await arrive('named.png');
+      const document = await saveLines(
+        '    <img src="/photos/named.png" alt="Named">\n    <img src="/photos/named.webp" alt="Named again">\n',
+      );
+      await until(
+        () => api.originals.runs().some((/** @type {any} */ run) => run.originals.includes(image)),
+        'the removal the save asked for',
+      );
+      await api.originals.idle();
+      assert.equal(onDisk(vite, image), true);
+      assert.match(waitingFor(image)?.reason ?? '', /names it as `\/photos\/named\.png`/);
+
+      const hintOn = () =>
+        api
+          .problems()
+          .find((/** @type {any} */ [uri]) => uri.toString() === document.uri.toString())?.[1]
+          .find((/** @type {any} */ entry) => entry.code === 'converted-beside');
+      await until(() => hintOn() !== undefined, 'the hint in the Problems panel');
+      const hint = hintOn();
+      assert.equal(
+        hint.message,
+        'public/photos/named.png has a WebP beside it: public/photos/named.webp',
+      );
+      assert.equal(hint.severity, vscode.DiagnosticSeverity.Information);
+      assert.equal(document.getText(hint.range), '/photos/named.png');
+
+      /** @type {vscode.CodeAction[]} */
+      const actions = await vscode.commands.executeCommand(
+        'vscode.executeCodeActionProvider',
+        document.uri,
+        hint.range,
+        vscode.CodeActionKind.QuickFix.value,
+      );
+      const fix = actions.find((action) => action.title === 'Use /photos/named.webp');
+      assert.ok(fix?.edit, `the quick fix, among ${actions.map((action) => action.title)}`);
+      assert.equal(onDisk(vite, image), true, 'nothing removed before the person saves');
+      assert.equal(await vscode.workspace.applyEdit(fix.edit), true);
+      assert.match(document.getText(), /<img src="\/photos\/named\.webp" alt="Named">/);
+      assert.equal(await document.save(), true);
+      await until(() => !onDisk(vite, image), 'the original removed once no line names it');
+      await api.originals.idle();
+      assert.equal(waitingFor(image), undefined);
+    });
+
+    it('removes, when a folder is added, an original whose WebP a line names and none names it', async () => {
+      const vite = folder('vite');
+      const image = await arrive('late.png');
+      // Written from outside the editor, so no save asks for the removal.
+      writeFileSync(path.join(vite.uri.fsPath, 'late.html'), '<img src="/photos/late.webp">\n');
+      const changed = () =>
+        new Promise((resolve) => {
+          const listening = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            listening.dispose();
+            resolve(undefined);
+          });
+        });
+      const at = (vscode.workspace.workspaceFolders ?? []).findIndex(
+        (entry) => entry.name === 'vite',
+      );
+      let done = changed();
+      assert.equal(vscode.workspace.updateWorkspaceFolders(at, 1), true);
+      await done;
+      done = changed();
+      assert.equal(
+        vscode.workspace.updateWorkspaceFolders(at, 0, { uri: vite.uri, name: 'vite' }),
+        true,
+      );
+      await done;
+      await until(() => !onDisk(vite, image), 'the original removed as the folder opened');
+      await api.originals.idle();
+      assert.deepEqual(
+        api.originals
+          .runs()
+          .filter((/** @type {any} */ run) => run.originals.includes(image))
+          .map((/** @type {any} */ run) => [run.trigger, run.apply]),
+        [
+          ['open', false],
+          ['open', true],
+        ],
+      );
+    });
+
+    it('removes on a click every original kept in a folder, though no line names them yet', async () => {
+      const site = folder('site');
+      const kept = api.watch
+        .waiting()
+        .filter((/** @type {any} */ entry) => entry.folder === site.uri.toString())
+        .map((/** @type {any} */ entry) => entry.original)
+        .sort();
+      assert.equal(kept.length, 51, 'the burst of 51 waits');
+      const outcome = await vscode.commands.executeCommand('upfly.removeOriginals', site.uri);
+      assert.deepEqual([...outcome.removed].sort(), kept);
+      for (const image of kept) {
+        assert.equal(onDisk(site, image), false, image);
+        assert.equal(onDisk(site, image.replace(/\.png$/, '.webp')), true, image);
+      }
+      assert.equal(
+        api.watch
+          .waiting()
+          .filter((/** @type {any} */ entry) => entry.folder === site.uri.toString()).length,
+        0,
+      );
+    });
   });
 });

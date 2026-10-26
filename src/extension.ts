@@ -18,12 +18,14 @@ import {
   versionNotice,
 } from './bundled-cli.js';
 import type { AuditResult, CommandName, ErrorLine, RefsResult } from './contract.js';
+import { type PathFix, brokenReplacement, waitingHints } from './hints.js';
 import type { Host, RunOptions } from './host.js';
 import { openLocation } from './locations.js';
 import { type NodeRuntime, chooseNode, nodeOnPath, versionOf } from './node-runtime.js';
 import { registerOldUsers } from './old-users-ui.js';
 import type { SetSetting } from './old-users.js';
 import { type PlanOutcome, registerOptimize } from './optimize-ui.js';
+import { type OriginalsPart, registerOriginals } from './originals-ui.js';
 import { brokenProblems } from './problems.js';
 import { progressText } from './progress-text.js';
 import { refsNodes } from './refs-model.js';
@@ -31,6 +33,8 @@ import { type ReviewPart, registerReview } from './review-ui.js';
 import { type RunHandle, type RunOutcome, startRun } from './runner.js';
 import { NodeTree, type ViewNode, viewNodes } from './tree.js';
 import { codeConfigRefusal, trustArgs } from './trust.js';
+import { WaitingOriginals } from './waiting.js';
+import { watchSettings } from './watch-config.js';
 import { type WatchPart, registerWatch } from './watch-ui.js';
 
 const IMAGE_GLOB = '**/*.{avif,gif,jpeg,jpg,png,svg,tif,tiff,webp}';
@@ -98,6 +102,8 @@ export interface UpflyExports {
   oldConfigs(): readonly string[];
   /** The watcher for new images. */
   readonly watch: WatchPart;
+  /** The originals kept beside their converted images, and their removal. */
+  readonly originals: OriginalsPart;
 }
 
 /**
@@ -127,6 +133,9 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   let found: { node: NodeRuntime; cli: BundledCli } | null = null;
   const started: (() => void)[] = [];
   const problems = vscode.languages.createDiagnosticCollection('upfly');
+  /** The quick fix of each Problems entry that has one, by file and then by place on the line. */
+  const fixes = new Map<string, Map<string, PathFix>>();
+  const waitingOriginals = new WaitingOriginals(context.workspaceState);
   /** The folder a quiet re-audit is reading, which a run the person asks for stops. */
   let quietly: vscode.WorkspaceFolder | null = null;
   const refreshes = new Map<string, NodeJS.Timeout>();
@@ -233,36 +242,106 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     return outcome;
   }
 
-  /** Replaces a folder's entries in the Problems panel with its audit's broken references. */
+  /**
+   * Replaces a folder's entries in the Problems panel with its audit's broken references and
+   * the lines naming an original kept beside its converted image, each with its quick fix to
+   * name the converted image where there is one.
+   */
   function showProblems(folder: vscode.WorkspaceFolder, result: AuditResult): void {
     const stale = [...problems]
       .map(([uri]) => uri)
       .filter(
         (uri) => vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() === folder.uri.toString(),
       );
-    for (const uri of stale) problems.delete(uri);
+    for (const uri of stale) {
+      problems.delete(uri);
+      fixes.delete(uri.toString());
+    }
+    const root = folder.uri.fsPath;
     const byFile = new Map<string, vscode.Diagnostic[]>();
-    const textOf = (file: string): string | null => {
-      try {
-        return readFileSync(path.join(folder.uri.fsPath, file), 'utf8');
-      } catch {
-        return null;
-      }
+    const textOf = (file: string): string | null => readText(path.join(root, file));
+    const add = (file: string, diagnostic: vscode.Diagnostic, fix: PathFix | null): void => {
+      diagnostic.source = 'Upfly';
+      byFile.set(file, [...(byFile.get(file) ?? []), diagnostic]);
+      if (fix === null) return;
+      const uri = vscode.Uri.joinPath(folder.uri, ...file.split('/')).toString();
+      fixes.set(uri, (fixes.get(uri) ?? new Map()).set(placeKey(fix), fix));
     };
+    const { format } = watchSettings({
+      exists: (file) => existsSync(path.join(root, file)),
+      read: (file) => readText(path.join(root, file)),
+    });
+    const exists = (relative: string) => existsSync(path.join(root, ...relative.split('/')));
     for (const problem of brokenProblems(result.report.findings, textOf)) {
       const diagnostic = new vscode.Diagnostic(
         new vscode.Range(problem.line, problem.start, problem.line, problem.end),
         problem.message,
         vscode.DiagnosticSeverity.Warning,
       );
-      diagnostic.source = 'Upfly';
       diagnostic.code = 'broken-reference';
-      byFile.set(problem.file, [...(byFile.get(problem.file) ?? []), diagnostic]);
+      const { written } = problem;
+      const replacement =
+        written === null
+          ? null
+          : brokenReplacement(
+              { file: problem.file, rawPath: written },
+              result.report.coverage.servingRoots.dirs,
+              format,
+              exists,
+            );
+      add(
+        problem.file,
+        diagnostic,
+        written === null || replacement === null ? null : { ...problem, written, replacement },
+      );
+    }
+    const kept = waitingOriginals.inFolder(folder.uri.toString());
+    for (const hint of waitingHints(result.images ?? [], kept, textOf)) {
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(hint.line, hint.start, hint.line, hint.end),
+        hint.message,
+        vscode.DiagnosticSeverity.Information,
+      );
+      diagnostic.code = 'converted-beside';
+      add(hint.file, diagnostic, hint);
     }
     for (const [file, list] of byFile) {
       problems.set(vscode.Uri.joinPath(folder.uri, ...file.split('/')), list);
     }
   }
+
+  /**
+   * The quick fix of an Upfly entry in the Problems panel: the path re-spelled for the
+   * converted image, written only when the person picks it, and only while the line still
+   * holds the path as the audit read it.
+   */
+  const pathFixes: vscode.CodeActionProvider = {
+    provideCodeActions(document, _range, context) {
+      const forFile = fixes.get(document.uri.toString());
+      if (forFile === undefined) return [];
+      return context.diagnostics.flatMap((diagnostic) => {
+        const { range } = diagnostic;
+        const fix = forFile.get(placeKey({ line: range.start.line, start: range.start.character }));
+        if (
+          diagnostic.source !== 'Upfly' ||
+          fix === undefined ||
+          !range.isSingleLine ||
+          document.getText(range) !== fix.written
+        ) {
+          return [];
+        }
+        const action = new vscode.CodeAction(
+          `Use ${fix.replacement}`,
+          vscode.CodeActionKind.QuickFix,
+        );
+        action.diagnostics = [diagnostic];
+        action.isPreferred = true;
+        action.edit = new vscode.WorkspaceEdit();
+        action.edit.replace(document.uri, range, fix.replacement);
+        return [action];
+      });
+    },
+  };
 
   /** The engine for a command, or null after saying, once, what is missing. */
   async function engineOrSay(): Promise<
@@ -579,7 +658,8 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   const planOf = registerOptimize(context, host, review);
   const agents = registerAgents(context, host);
   const oldUsers = registerOldUsers(context, host, agents);
-  const watch = registerWatch(context, host);
+  const watch = registerWatch(context, host, waitingOriginals);
+  const originals = registerOriginals(context, host, waitingOriginals);
   for (const folder of fileFolders()) {
     if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
       void review.show(folder, false);
@@ -593,6 +673,16 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
         for (const timer of refreshes.values()) clearTimeout(timer);
       },
     },
+    vscode.languages.registerCodeActionsProvider({ scheme: 'file' }, pathFixes, {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    }),
+    // A kept original removed, or kept for another reason, changes its hints at once.
+    waitingOriginals.onChange(() => {
+      for (const folder of fileFolders()) {
+        const audit = audits.get(folder.uri.toString());
+        if (audit?.kind === 'result') showProblems(folder, audit.result);
+      }
+    }),
     log,
     status,
     auditTree,
@@ -657,6 +747,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     oldSettings: () => oldUsers.oldSettings(),
     oldConfigs: () => oldUsers.oldConfigs(),
     watch,
+    originals,
   };
 }
 
@@ -679,6 +770,19 @@ function folderOutcome(
 /** The workspace folders on disk; a virtual folder has no files the CLI could read. */
 function fileFolders(): readonly vscode.WorkspaceFolder[] {
   return (vscode.workspace.workspaceFolders ?? []).filter((folder) => folder.uri.scheme === 'file');
+}
+
+/** Where a quick fix sits in its file, as its key. */
+function placeKey(place: { readonly line: number; readonly start: number }): string {
+  return `${place.line}:${place.start}`;
+}
+
+function readText(file: string): string | null {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 function reportUri(folder: vscode.WorkspaceFolder): vscode.Uri {

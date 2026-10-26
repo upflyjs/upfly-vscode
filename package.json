@@ -188,6 +188,11 @@
         "command": "upfly.stopWatching",
         "title": "Stop watching this folder",
         "category": "Upfly"
+      },
+      {
+        "command": "upfly.removeOriginals",
+        "title": "Remove the originals kept beside new images",
+        "category": "Upfly"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -405,6 +410,10 @@
         {
           "command": "upfly.stopWatching",
           "when": "false"
+        },
+        {
+          "command": "upfly.removeOriginals",
+          "when": "upfly.originalsWaiting"
         }
       ],
       "editor/title": [
