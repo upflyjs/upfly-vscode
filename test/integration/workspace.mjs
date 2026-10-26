@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -147,21 +148,7 @@ export function exitWorkspace(root, fixtures, specs) {
 export async function watchWorkspace(root, fixtures) {
   rmSync(root, { recursive: true, force: true });
   mkdirSync(path.join(root, 'stock'), { recursive: true });
-  const { default: sharp } = await import('sharp');
-  /** A photo-like image of random noise, which no two calls make alike. @param {string} file */
-  const make = async (file) => {
-    const noise = sharp({
-      create: {
-        width: 160,
-        height: 120,
-        channels: 3,
-        background: '#808080',
-        noise: { type: 'gaussian', mean: 128, sigma: 40 },
-      },
-    });
-    const image = file.endsWith('.jpg') ? noise.jpeg({ quality: 95 }) : noise.png();
-    writeFileSync(file, await image.toBuffer());
-  };
+  const make = await imageMaker();
   for (const name of ['pasted.png', 'outside.png', 'skipped.png', 'named.png', 'late.png']) {
     await make(path.join(root, 'stock', name));
   }
@@ -210,6 +197,120 @@ export async function watchWorkspace(root, fixtures) {
   const workspaceFile = path.join(root, 'watch.code-workspace');
   writeFileSync(workspaceFile, JSON.stringify({ folders: [{ path: 'site' }, { path: 'vite' }] }));
   return { root, workspaceFile };
+}
+
+/**
+ * The workspace of the watcher's exit test, in a short folder emptied first but for the
+ * fixtures' installed dependencies: a copy of each fixture `specs` names, from a checkout of
+ * Upfly's own repository, its page naming an image not there yet, with a config where the
+ * spec watches named folders or the fixture's served folder must be named, each committed in a
+ * git repository of its own with a branch whose commit adds two images to the watched folder;
+ * an untouched copy of each beside them for the builds' control; images made for the tests
+ * (stock); and the specs, as `watch-exit.json`, for the tests to read.
+ *
+ * @param {string} root the folder to make it in
+ * @param {string} fixtures the `fixtures` folder of a checkout of Upfly's repository
+ * @param {Record<string, { page: string, folder: string, served: string, watch?: string[] }>} specs
+ * @param {Record<string, { publicDirs?: string[] }>} builds each fixture's build, for its served folder
+ * @returns {Promise<{ root: string, workspaceFile: string }>}
+ */
+export async function watchExitWorkspace(root, fixtures, specs, builds) {
+  mkdirSync(root, { recursive: true });
+  for (const entry of readdirSync(root)) {
+    if (entry !== 'deps') rmSync(path.join(root, entry), { recursive: true, force: true });
+  }
+  mkdirSync(path.join(root, 'stock'));
+  const make = await imageMaker();
+  const names = Object.keys(specs);
+  for (const name of names) {
+    for (const kind of ['pasted', 'outside']) {
+      await make(path.join(root, 'stock', `${kind}-${name}.png`));
+    }
+  }
+  for (let index = 1; index <= 51; index += 1) {
+    await make(path.join(root, 'stock', `burst-${String(index).padStart(2, '0')}.png`));
+  }
+  for (const name of names) {
+    const spec = specs[name];
+    if (spec === undefined) continue;
+    const copy = path.join(root, name);
+    cpSync(path.join(fixtures, name), copy, {
+      recursive: true,
+      filter: (source) => !NOT_COPIED.has(path.basename(source)),
+    });
+    const publicDirs = builds[name]?.publicDirs;
+    if (publicDirs !== undefined || spec.watch !== undefined) {
+      const config = {
+        $schema: UPFLY_3,
+        ...(publicDirs === undefined ? {} : { publicDirs }),
+        ...(spec.watch === undefined ? {} : { watch: { folders: spec.watch } }),
+      };
+      writeFileSync(path.join(copy, 'upfly.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    }
+    const page = path.join(copy, ...spec.page.split('/'));
+    writeFileSync(
+      page,
+      readFileSync(page, 'utf8').replace(
+        '</body>',
+        `  <img src="${spec.served}pasted.png" alt="Pasted" />\n  </body>`,
+      ),
+    );
+    commitAll(copy);
+    cpSync(copy, path.join(root, 'untouched', name), {
+      recursive: true,
+      filter: (source) => path.basename(source) !== '.git',
+    });
+    /** @param {string[]} args */
+    const git = (...args) =>
+      execFileSync('git', args, {
+        cwd: copy,
+        env: { ...process.env, GIT_CEILING_DIRECTORIES: root },
+        stdio: 'pipe',
+      });
+    git('checkout', '-q', '-b', 'more-images');
+    await make(path.join(copy, ...spec.folder.split('/'), 'branch-a.png'));
+    await make(path.join(copy, ...spec.folder.split('/'), 'branch-b.jpg'));
+    commitAll(copy, 'Two images on a branch');
+    git('checkout', '-q', '-');
+  }
+  writeFileSync(path.join(root, 'watch-exit.json'), `${JSON.stringify(specs, null, 2)}\n`);
+  const workspaceFile = path.join(root, 'watch-exit.code-workspace');
+  writeFileSync(workspaceFile, JSON.stringify({ folders: names.map((name) => ({ path: name })) }));
+  return { root, workspaceFile };
+}
+
+/**
+ * Where the watcher's exit test makes its workspace: UPFLY_WATCH_EXIT_ROOT, or a short folder
+ * in the temporary folder, by its real path, since file events name the real path.
+ */
+export function watchExitRoot() {
+  return (
+    process.env.UPFLY_WATCH_EXIT_ROOT ??
+    path.join(realpathSync.native(tmpdir()), 'upfly-watch-exit')
+  );
+}
+
+/**
+ * What makes the tests' images: each a photo-like picture of random noise, which no two calls
+ * make alike, so no repository has its bytes.
+ *
+ * @returns {Promise<(file: string) => Promise<void>>}
+ */
+async function imageMaker() {
+  const { default: sharp } = await import('sharp');
+  return async (file) => {
+    const noise = sharp({
+      create: {
+        width: 160,
+        height: 120,
+        channels: 3,
+        background: '#808080',
+        noise: { type: 'gaussian', mean: 128, sigma: 40 },
+      },
+    });
+    const image = file.endsWith('.jpg') ? noise.jpeg({ quality: 95 }) : noise.png();
+    writeFileSync(file, await image.toBuffer());
+  };
 }
 
 /** The `$schema` line `upfly init` writes, which marks a JSON config as Upfly 3's. */

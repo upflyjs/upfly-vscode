@@ -82,6 +82,17 @@ jobs:
           UPFLY_FIXTURES: ${{ github.workspace }}/upfly-fixtures/fixtures
         run: |
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:exit; else npm run test:exit; fi
+      # New images pasted, written from outside, checked out and arriving fifty at once in
+      # copies of three fixtures, then each one's build and link check. The CLI the extension
+      # carries cannot remove kept originals yet, so that part is checked only on a build that
+      # can, here as in the watcher's suite above.
+      - name: The watcher's exit test on Upfly's fixtures
+        shell: bash
+        env:
+          UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
+          UPFLY_FIXTURES: ${{ github.workspace }}/upfly-fixtures/fixtures
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:watch-exit; else npm run test:watch-exit; fi
 
   package:
     # One package per platform, each carrying that platform's sharp and no other, built on one

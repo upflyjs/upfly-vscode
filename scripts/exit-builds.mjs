@@ -8,7 +8,9 @@
  * on purpose. Each fixture's dependencies are installed once, beside the copies.
  *
  * Usage: `node scripts/exit-builds.mjs [root]`, the root being the exit test's workspace
- * folder (UPFLY_EXIT_ROOT, or `upfly-exit` in the system's temporary folder).
+ * folder (UPFLY_EXIT_ROOT, or `upfly-exit` in the system's temporary folder); or
+ * `node scripts/exit-builds.mjs --watch` for the watcher's exit test, on its fixtures and in
+ * its own folder.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -23,11 +25,16 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { FIXTURES, danglingPaths } from '../test/integration/site-check.mjs';
+import { FIXTURES, WATCH_EXIT, danglingPaths } from '../test/integration/site-check.mjs';
+import { watchExitRoot } from '../test/integration/workspace.mjs';
 
+const watching = process.argv.includes('--watch');
 const root = path.resolve(
-  process.argv[2] ?? process.env.UPFLY_EXIT_ROOT ?? path.join(tmpdir(), 'upfly-exit'),
+  watching
+    ? watchExitRoot()
+    : (process.argv[2] ?? process.env.UPFLY_EXIT_ROOT ?? path.join(tmpdir(), 'upfly-exit')),
 );
+const names = Object.keys(watching ? WATCH_EXIT : FIXTURES);
 const WINDOWS = process.platform === 'win32';
 
 /**
@@ -105,7 +112,7 @@ function check(tree, name, modules) {
 
 let failed = false;
 const rows = [];
-for (const name of Object.keys(FIXTURES)) {
+for (const name of names) {
   if (!existsSync(path.join(root, 'built', name))) {
     rows.push(`${name}: no converted copy, so the exit test did not convert it`);
     failed = true;
@@ -136,14 +143,14 @@ for (const name of Object.keys(FIXTURES)) {
   }
 }
 
-// The link check must be able to fail: one reference in a copy of plain-html pointed at a
-// file that does not exist.
+// The link check must be able to fail: the first image a copy of plain-html names pointed at
+// a file that does not exist.
 const broken = path.join(root, 'negative', 'plain-html');
 cpSync(path.join(root, 'built', 'plain-html'), broken, { recursive: true });
 const page = readFileSync(path.join(broken, 'index.html'), 'utf8');
 writeFileSync(
   path.join(broken, 'index.html'),
-  page.replace('images/logo.webp', 'images/logo-broken-on-purpose-by-the-check.webp'),
+  page.replace(/src="images\/[^"]+"/, 'src="images/logo-broken-on-purpose-by-the-check.webp"'),
 );
 const negative = danglingPaths(broken).some((entry) =>
   entry.includes('logo-broken-on-purpose-by-the-check'),

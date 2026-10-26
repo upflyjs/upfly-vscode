@@ -3,8 +3,9 @@
  * The integration tests' configuration for `vscode-test`. `extension` runs the read-only tests
  * on the extension from this repository, `change` the tests that change files, `agents` those
  * of coding agents, and `update` those of the old extension's users, each on a workspace of its
- * own; `watch` the watcher's tests and `exit` the exit test, both on copies of Upfly's own
- * fixtures, which UPFLY_FIXTURES names when no checkout of Upfly sits beside this one.
+ * own; `watch` the watcher's tests, `exit` the exit test and `watch-exit` the watcher's exit
+ * test, all on copies of Upfly's own fixtures, which UPFLY_FIXTURES names when no checkout of
+ * Upfly sits beside this one.
  * `package` and `package-change` run the same tests on a built package, installed into the
  * test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the VS Code version
  * (the current release by default), and UPFLY_VSCODE_EXECUTABLE an installation already on
@@ -14,7 +15,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { defineConfig } from '@vscode/test-cli';
-import { FIXTURES } from './test/integration/site-check.mjs';
+import { FIXTURES, WATCH_EXIT } from './test/integration/site-check.mjs';
 import {
   EDITOR_VARIABLE,
   agentsWorkspace,
@@ -22,6 +23,8 @@ import {
   exitWorkspace,
   fixtureWorkspace,
   updateWorkspace,
+  watchExitRoot,
+  watchExitWorkspace,
   watchWorkspace,
 } from './test/integration/workspace.mjs';
 
@@ -38,6 +41,10 @@ const exit =
 const agents = label === 'agents' ? agentsWorkspace() : null;
 const update = label === 'update' ? updateWorkspace() : null;
 const watch = label === 'watch' ? await watchWorkspace(watchRoot(), upflyFixtures()) : null;
+const watchExit =
+  label === 'watch-exit'
+    ? await watchExitWorkspace(watchExitRoot(), upflyFixtures(), WATCH_EXIT, FIXTURES)
+    : null;
 const executable = process.env.UPFLY_VSCODE_EXECUTABLE;
 const vsix = process.env.UPFLY_VSIX;
 
@@ -128,6 +135,15 @@ export default defineConfig([
     // git stops at the workspace's folder, so a folder without a repository of its own is
     // never read as part of one above it.
     ...(watch === null ? {} : { env: { GIT_CEILING_DIRECTORIES: watch.root } }),
+  },
+  {
+    ...common,
+    label: 'watch-exit',
+    files: 'test/integration/watch-exit.test.cjs',
+    workspaceFolder: watchExit?.workspaceFile ?? read,
+    launchArgs: ['--disable-extensions'],
+    mocha: { ui: 'bdd', timeout: 300_000 },
+    ...(watchExit === null ? {} : { env: { GIT_CEILING_DIRECTORIES: watchExit.root } }),
   },
   {
     ...common,

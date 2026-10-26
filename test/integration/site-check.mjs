@@ -23,6 +23,19 @@ export const FIXTURES = {
   'vite-react': { build: 'vite build', output: 'dist' },
 };
 
+/**
+ * The fixtures of the watcher's exit test: two whose folders named public are watched by
+ * default, and plain-html watching the whole project. For each, the page that names its new
+ * images, the watched folder they arrive in, and how the page writes that folder's paths.
+ *
+ * @type {Record<string, { page: string, folder: string, served: string, watch?: string[] }>}
+ */
+export const WATCH_EXIT = {
+  'vite-react': { page: 'index.html', folder: 'public/photos', served: '/photos/' },
+  astro: { page: 'src/pages/index.astro', folder: 'public/covers', served: '/covers/' },
+  'plain-html': { page: 'index.html', folder: 'images', served: 'images/', watch: ['.'] },
+};
+
 /** Build outputs, dependencies and caches, never copied and never walked. */
 export const NEVER_COPY = new Set([
   'node_modules',
