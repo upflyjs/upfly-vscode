@@ -305,7 +305,7 @@ describe('the status bar', () => {
     );
     expect(text).toBe(
       [
-        '2 images from outside the editor were converted, and their originals are kept beside the converted image.',
+        '2 images from outside the editor were converted, and their originals are kept beside the converted images.',
         'Upfly removes each one once a line names its converted image and none names the original, checked when a file is saved and when the folder opens. Click to remove them now.',
         '',
         'public/a.png',

@@ -236,7 +236,10 @@ export function waitingTooltip(
     return `${where}${entry.original}${why}`;
   });
   if (waiting.length > LISTED) lines.push(`and ${waiting.length - LISTED} more`);
-  const what = `${waiting.length === 1 ? 'An image' : `${waiting.length} images`} from outside the editor ${waiting.length === 1 ? 'was' : 'were'} converted, and ${waiting.length === 1 ? 'its original is' : 'their originals are'} kept beside the converted image.`;
+  const what =
+    waiting.length === 1
+      ? 'An image from outside the editor was converted, and its original is kept beside the converted image.'
+      : `${waiting.length} images from outside the editor were converted, and their originals are kept beside the converted images.`;
   const next = canRemove
     ? 'Upfly removes each one once a line names its converted image and none names the original, checked when a file is saved and when the folder opens. Click to remove them now.'
     : 'Removing them comes with a later version of Upfly. Until then, delete each one yourself once no line names it.';
