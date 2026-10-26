@@ -183,6 +183,11 @@
         "command": "upfly.convertOldConfig",
         "title": "Convert the old extension's upfly.config.json",
         "category": "Upfly"
+      },
+      {
+        "command": "upfly.stopWatching",
+        "title": "Stop watching this folder",
+        "category": "Upfly"
       }
     ],
     "mcpServerDefinitionProviders": [
@@ -241,6 +246,11 @@
           "command": "upfly.optimize",
           "when": "resourceScheme == file && resourceExtname =~ /^\\.(avif|gif|jpe?g|png|svg|tiff?|webp)$/i",
           "group": "7_upfly@2"
+        },
+        {
+          "command": "upfly.stopWatching",
+          "when": "explorerResourceIsFolder && resourceScheme == file",
+          "group": "7_upfly@3"
         }
       ],
       "editor/title/context": [
@@ -391,6 +401,10 @@
         {
           "command": "upfly.convertOldConfig",
           "when": "upfly.oldConfig"
+        },
+        {
+          "command": "upfly.stopWatching",
+          "when": "false"
         }
       ],
       "editor/title": [

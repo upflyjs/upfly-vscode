@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { copyFileSync, existsSync, mkdirSync, readFileSync } = require('node:fs');
 const path = require('node:path');
+const { parse } = require('jsonc-parser');
 const vscode = require('vscode');
 
 /** @param {string} name */
@@ -166,5 +167,51 @@ describe('new images arriving in a watched folder', function () {
     const site = folder('site');
     assert.equal(existsSync(path.join(site.uri.fsPath, '.upfly', 'manifest.json')), false);
     assert.equal(api.review(site.uri), undefined);
+  });
+
+  it('stops watching a folder from the Explorer, writing it into watch.skip with comments kept', async () => {
+    const site = folder('site');
+    const burst = vscode.Uri.joinPath(site.uri, 'images', 'burst');
+    const told = await vscode.commands.executeCommand('upfly.stopWatching', burst);
+    assert.equal(
+      told,
+      'Upfly no longer watches images/burst for new images: it is in watch.skip in upfly.config.json.',
+    );
+    const text = readFileSync(path.join(site.uri.fsPath, 'upfly.config.json'), 'utf8');
+    assert.match(text, /\/\/ The site is served from the folder itself\./);
+    assert.deepEqual(parse(text), {
+      $schema: './node_modules/upfly/schema/config.json',
+      publicDirs: ['.'],
+      watch: { skip: ['images/burst'], folders: ['images'] },
+    });
+  });
+
+  it('leaves a new image in that folder as it is', async () => {
+    const site = folder('site');
+    const image = 'images/burst/skipped.png';
+    copyFileSync(stock('skipped.png'), path.join(site.uri.fsPath, ...image.split('/')));
+    await until(() => decision('site', image) !== undefined, 'the image in the skipped folder');
+    await api.watch.idle();
+    assert.equal(decision('site', image), 'not in a watched folder');
+    assert.equal(existsSync(path.join(site.uri.fsPath, 'images', 'burst', 'skipped.webp')), false);
+  });
+
+  it('writes a config holding the $schema line and the watch part only, where there is none', async () => {
+    const vite = folder('vite');
+    await vscode.commands.executeCommand(
+      'upfly.stopWatching',
+      vscode.Uri.joinPath(vite.uri, 'public', 'icons'),
+    );
+    assert.deepEqual(parse(readFileSync(path.join(vite.uri.fsPath, 'upfly.config.json'), 'utf8')), {
+      $schema: './node_modules/upfly/schema/config.json',
+      watch: { skip: ['public/icons'] },
+    });
+  });
+
+  it('refuses a folder outside every workspace folder, and says why', async () => {
+    const outside = vscode.Uri.file(path.dirname(stock('outside.png')));
+    const told = await vscode.commands.executeCommand('upfly.stopWatching', outside);
+    assert.match(String(told), /^Upfly watches folders inside an open workspace folder only/);
+    assert.equal(api.refusals().at(-1), told);
   });
 });

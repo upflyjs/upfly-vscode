@@ -95,7 +95,7 @@ export type SkipEdit =
  * setting as written, or writes a new config holding the `$schema` line `upfly init` writes
  * and the `watch` part only.
  *
- * @param text the config's text, or null when the project has none
+ * @param text the config's text, or null when there is none or it could not be read
  * @param settings the project's watch settings, read from the same text
  * @param folder the folder, relative to the project with `/`
  */
@@ -114,12 +114,12 @@ export function skipEdit(text: string | null, settings: WatchSettings, folder: s
     (skip) => skip === '.' || skip === folder || folder.startsWith(`${skip}/`),
   );
   if (by !== undefined) return { kind: 'already', by };
-  if (text === null) {
+  if (settings.config === 'none') {
     const config = { $schema: UPFLY_SCHEMA, watch: { skip: [folder] } };
     return { kind: 'write', text: `${JSON.stringify(config, null, 2)}\n` };
   }
-  const value = readConfigText(text);
-  if (settings.config === 'unreadable' || !isRecord(value)) {
+  const value = text === null ? undefined : readConfigText(text);
+  if (text === null || settings.config === 'unreadable' || !isRecord(value)) {
     return refused(
       "This project's upfly.config.json is not valid JSON, so Upfly does not change it. Correct it, then try again.",
     );

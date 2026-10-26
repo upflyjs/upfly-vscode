@@ -162,7 +162,9 @@ export async function watchWorkspace(root, fixtures) {
     const image = file.endsWith('.jpg') ? noise.jpeg({ quality: 95 }) : noise.png();
     writeFileSync(file, await image.toBuffer());
   };
-  for (const name of ['pasted.png', 'outside.png']) await make(path.join(root, 'stock', name));
+  for (const name of ['pasted.png', 'outside.png', 'skipped.png']) {
+    await make(path.join(root, 'stock', name));
+  }
   for (let index = 1; index <= 51; index += 1) {
     await make(path.join(root, 'stock', `burst-${String(index).padStart(2, '0')}.png`));
   }
@@ -173,8 +175,20 @@ export async function watchWorkspace(root, fixtures) {
     recursive: true,
     filter: (source) => !NOT_COPIED.has(path.basename(source)),
   });
-  const config = { $schema: UPFLY_3, publicDirs: ['.'], watch: { folders: ['images'] } };
-  writeFileSync(path.join(site, 'upfly.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+  writeFileSync(
+    path.join(site, 'upfly.config.json'),
+    [
+      '{',
+      `  "$schema": "${UPFLY_3}",`,
+      '  // The site is served from the folder itself.',
+      '  "publicDirs": ["."],',
+      '  "watch": {',
+      '    "folders": ["images"]',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
   writeFileSync(
     path.join(site, 'index.html'),
     `${readFileSync(path.join(site, 'index.html'), 'utf8')}<img src="images/pasted.png" alt="A pasted image">\n`,

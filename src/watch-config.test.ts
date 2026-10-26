@@ -191,6 +191,11 @@ describe('skipEdit', () => {
     expect(edit.kind).toBe('refused');
   });
 
+  it('never writes a new config over one that could not be read', () => {
+    const settings = settingsOf({ 'upfly.config.json': null });
+    expect(skipEdit(null, settings, 'public').kind).toBe('refused');
+  });
+
   it('refuses a config that is not valid JSON, or whose watch.skip is not a list', () => {
     const broken = '{ "watch": ';
     expect(skipEdit(broken, settingsOf({ 'upfly.config.json': broken }), 'x').kind).toBe('refused');

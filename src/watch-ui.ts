@@ -7,7 +7,7 @@
  * not trust nothing is watched; watching starts once the workspace is trusted.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import type { ErrorLine, OptimizeResult, UndoResult } from './contract.js';
@@ -36,7 +36,7 @@ import {
   refusalOf,
   reportOf,
 } from './watch-batch.js';
-import { type WatchSettings, watchSettings } from './watch-config.js';
+import { type WatchSettings, skipEdit, watchSettings } from './watch-config.js';
 import { commonFolder, isCandidate, isNeverWatched, isWatched } from './watch-paths.js';
 import {
   type Batch,
@@ -524,6 +524,71 @@ export function registerWatch(context: vscode.ExtensionContext, host: Host): Wat
     blockShown.delete(key);
   }
 
+  /**
+   * Adds a folder chosen in the Explorer to `watch.skip` of its project's `upfly.config.json`,
+   * so no new image there is converted. Returns what the person was told, for the tests.
+   */
+  async function stopWatching(target?: unknown): Promise<string | undefined> {
+    if (!(target instanceof vscode.Uri) || target.scheme !== 'file' || !isFolder(target.fsPath)) {
+      return tell('Right-click a folder in the Explorer and choose Stop watching this folder.');
+    }
+    const folder = vscode.workspace.getWorkspaceFolder(target);
+    if (folder === undefined) {
+      return say(
+        `Upfly watches folders inside an open workspace folder only, and ${target.fsPath} is outside every one.`,
+      );
+    }
+    if (!vscode.workspace.isTrusted) {
+      host.refuse(
+        {
+          message:
+            'This workspace is not trusted, so Upfly changes no file in it. Trust the workspace to stop watching a folder.',
+          next: null,
+          actions: [{ kind: 'trust', title: 'Manage Workspace Trust' }],
+        },
+        () => void vscode.commands.executeCommand('workbench.trust.manage'),
+      );
+      return undefined;
+    }
+    const relative = relativeTo(folder, target.fsPath) ?? '.';
+    const shown = relative === '.' ? folder.name : relative;
+    if (isNeverWatched(`${relative}/`)) {
+      return tell(
+        `Upfly never converts new images in ${shown}: no folder named .upfly, .git or node_modules is watched.`,
+      );
+    }
+    const file = path.join(folder.uri.fsPath, JSON_CONFIG_FILE);
+    if (vscode.workspace.textDocuments.some((doc) => doc.isDirty && doc.uri.fsPath === file)) {
+      return say(
+        `upfly.config.json in ${folder.name} has changes not saved in the editor. Save or revert them first: Upfly writes the file on disk.`,
+      );
+    }
+    const edit = skipEdit(readText(file), settingsOf(folder), relative);
+    if (edit.kind === 'refused') return say(edit.message);
+    if (edit.kind === 'already') {
+      return tell(
+        `Upfly does not watch ${shown} for new images: watch.skip in upfly.config.json holds ${edit.by}.`,
+      );
+    }
+    writeFileSync(file, edit.text);
+    return tell(
+      `Upfly no longer watches ${shown} for new images: it is in watch.skip in upfly.config.json.`,
+    );
+  }
+
+  /** Tells the person something, and logs it. */
+  function tell(text: string): string {
+    host.log.info(text);
+    void vscode.window.showInformationMessage(text);
+    return text;
+  }
+
+  /** Refuses what the person asked for, with the reason. */
+  function say(text: string): string {
+    host.refuse({ message: text, next: null, actions: [] }, () => undefined);
+    return text;
+  }
+
   const queue = new NewImageQueue(
     { examine, ask, run, log: (text) => host.log.info(text) },
     {
@@ -580,7 +645,11 @@ export function registerWatch(context: vscode.ExtensionContext, host: Host): Wat
     for (const entry of gone) problems.delete(entry);
   }
 
-  context.subscriptions.push(problems, { dispose: () => queue.dispose() });
+  context.subscriptions.push(
+    problems,
+    { dispose: () => queue.dispose() },
+    vscode.commands.registerCommand('upfly.stopWatching', stopWatching),
+  );
   if (vscode.workspace.isTrusted) start();
   else context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(start));
 
@@ -666,6 +735,14 @@ function entriesOf(dir: string): { name: string; isDirectory(): boolean; isFile(
 /** Each image's size once it stopped growing. */
 function sizesOf(batch: Batch): Map<string, number | null> {
   return new Map(batch.images.map((image) => [image.path, image.bytes]));
+}
+
+function isFolder(file: string): boolean {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function look(root: string, image: string): { size: number; mtimeMs: number } | null {
