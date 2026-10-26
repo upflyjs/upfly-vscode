@@ -12,6 +12,9 @@ const path = require('node:path');
 const vscode = require('vscode');
 const { listTools } = require('./mcp-client.cjs');
 
+/** The exact version of the MCP server, and of the CLI it runs, that the extension carries. */
+const CARRIED = require('../../package.json').dependencies['upfly-mcp'];
+
 /** @param {string} name */
 function folder(name) {
   const found = vscode.workspace.workspaceFolders?.find((entry) => entry.name === name);
@@ -60,7 +63,7 @@ describe('coding agents and the Upfly extension', function () {
     assert.match(server.args[0], /upfly-mcp[\\/]dist[\\/]bin\.js$/);
     assert.equal(server.args[1], folder('configured').uri.fsPath);
     assert.equal(server.env.ELECTRON_RUN_AS_NODE, engine.node.kind === 'editor' ? '1' : undefined);
-    assert.equal(server.version, '3.2.0');
+    assert.equal(server.version, CARRIED);
   });
 
   it("starts the server it registers, which lists Upfly's seven tools", async () => {
@@ -72,7 +75,7 @@ describe('coding agents and the Upfly extension', function () {
     });
     assert.deepEqual(
       [info.name, info.version, tools],
-      ['upfly', '3.2.0', ['audit', 'check', 'refs', 'optimize', 'dedupe', 'move', 'undo']],
+      ['upfly', CARRIED, ['audit', 'check', 'refs', 'optimize', 'dedupe', 'move', 'undo']],
     );
   });
 

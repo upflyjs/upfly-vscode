@@ -431,11 +431,11 @@
     "jsonc-parser": "3.3.1",
     "mocha": "11.8.0",
     "typescript": "5.9.3",
-    "upfly-core": "3.2.0",
+    "upfly-core": "3.3.0",
     "vitest": "2.1.9"
   },
   "dependencies": {
-    "upfly": "3.2.0",
-    "upfly-mcp": "3.2.0"
+    "upfly": "3.3.0",
+    "upfly-mcp": "3.3.0"
   }
 }

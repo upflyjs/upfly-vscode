@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: upflyjs/upfly
-          ref: v3.2.0
+          ref: v3.3.0
           path: upfly-fixtures
           sparse-checkout: fixtures
       - name: The exit test on Upfly's fixtures
