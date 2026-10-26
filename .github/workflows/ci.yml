@@ -49,6 +49,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The watcher's tests convert new images in copies of Upfly's own fixtures, and the exit
+      # test converts copies of all six, then builds each one and checks its links, so both
+      # need them from Upfly's repository, at the release the extension carries.
+      - name: Upfly's fixtures
+        uses: actions/checkout@v4
+        with:
+          repository: upflyjs/upfly
+          ref: v3.3.0
+          path: upfly-fixtures
+          sparse-checkout: fixtures
       - name: A display for VS Code on Linux
         if: runner.os == 'Linux'
         run: command -v xvfb-run >/dev/null || (sudo apt-get update && sudo apt-get install -y xvfb)
@@ -56,6 +66,7 @@ jobs:
         shell: bash
         env:
           UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
+          UPFLY_FIXTURES: ${{ github.workspace }}/upfly-fixtures/fixtures
         run: |
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:integration; else npm run test:integration; fi
       - name: In a workspace VS Code does not trust
@@ -64,16 +75,6 @@ jobs:
           UPFLY_VSCODE_VERSION: ${{ matrix.vscode }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm run test:untrusted; else npm run test:untrusted; fi
-      # The exit test converts copies of Upfly's own fixtures through the extension, then
-      # builds each one and checks its links, so it needs them from Upfly's repository, at
-      # the release the extension carries.
-      - name: Upfly's fixtures
-        uses: actions/checkout@v4
-        with:
-          repository: upflyjs/upfly
-          ref: v3.3.0
-          path: upfly-fixtures
-          sparse-checkout: fixtures
       - name: The exit test on Upfly's fixtures
         shell: bash
         env:

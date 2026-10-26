@@ -77,11 +77,16 @@ export const GIVE_UP_MS = 60_000;
 
 const KINDS: readonly Kind[] = ['paste', 'arrival'];
 
-/** Why a folder converts nothing for now, in the words of the log. */
-const UNTIL: Record<BlockCause, string> = {
-  config: 'its Upfly config changes or VS Code starts again',
-  record: 'the run that stopped part way is put back or undone, or VS Code starts again',
-};
+/**
+ * What a stopped folder waits for, as the person reads it after "until".
+ *
+ * @param cause what has to change
+ */
+export function untilText(cause: BlockCause): string {
+  return cause === 'config'
+    ? 'its Upfly config changes or VS Code starts again'
+    : 'the run that stopped part way is put back or undone, or VS Code starts again';
+}
 
 /**
  * The wait before trying a locked batch again: 2, 4 and 8 seconds, then every 10.
@@ -329,14 +334,14 @@ export class NewImageQueue {
       this.attempts.delete(key);
     }
     this.steps.log(
-      `Upfly converts no new image in ${folder} until ${UNTIL[until]}: ${why}${dropped > 0 ? ` Left as they are: ${plural(dropped, 'new image')} waiting there.` : ''}`,
+      `Upfly converts no new image in ${folder} until ${untilText(until)}: ${why}${dropped > 0 ? ` Left as they are: ${plural(dropped, 'new image')} waiting there.` : ''}`,
     );
   }
 
   private notConverted(folder: string, image: string): void {
     const until = this.blocks.get(folder)?.until ?? 'config';
     this.steps.log(
-      `Not converted: ${image}, which arrived in ${folder}, since Upfly converts no new image there until ${UNTIL[until]}.`,
+      `Not converted: ${image}, which arrived in ${folder}, since Upfly converts no new image there until ${untilText(until)}.`,
     );
   }
 }

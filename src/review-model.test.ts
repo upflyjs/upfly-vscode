@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RunFile, RunList, UndoResult } from './contract.js';
 import type { HostOutcome } from './host.js';
@@ -5,6 +6,7 @@ import {
   accept,
   beforeDocument,
   beforeText,
+  isLastRunRecord,
   lineKey,
   reviewOf,
   sameRun,
@@ -269,6 +271,26 @@ describe('beforeDocument', () => {
         '<p>images/logo.webp stays as written</p>',
         '',
       ].join('\n'),
+    );
+  });
+});
+
+describe('isLastRunRecord', () => {
+  const folder = path.join(path.sep, 'work', 'site');
+
+  it("takes the folder's record of its last run", () => {
+    expect(isLastRunRecord(folder, path.join(folder, '.upfly', 'manifest.json'))).toBe(true);
+  });
+
+  it('leaves the record of a run made without undo, which never becomes the last run', () => {
+    expect(isLastRunRecord(folder, path.join(folder, '.upfly', 'no-undo', 'manifest.json'))).toBe(
+      false,
+    );
+  });
+
+  it('leaves the record of a project inside the folder', () => {
+    expect(isLastRunRecord(folder, path.join(folder, 'docs', '.upfly', 'manifest.json'))).toBe(
+      false,
     );
   });
 });

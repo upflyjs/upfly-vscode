@@ -5,7 +5,7 @@
  * with no config. `scripts/untrusted-check.mjs` opens it.
  */
 const assert = require('node:assert/strict');
-const { existsSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync } = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 
@@ -108,6 +108,22 @@ describe('the Upfly extension in a workspace VS Code does not trust', function (
       /^This workspace is not trusted, so Upfly changes no file in it\./,
     );
     assert.equal(api.refusals().length, before + 1);
+  });
+
+  it('watches no folder for new images there, and converts none that arrive', async () => {
+    assert.equal(api.watch.started(), false);
+    const served = path.join(folder(1).uri.fsPath, 'public');
+    mkdirSync(served, { recursive: true });
+    copyFileSync(
+      path.join(folder(1).uri.fsPath, 'src', 'img', 'logo.png'),
+      path.join(served, 'arrived.png'),
+    );
+    // Long enough for a watcher to hear it, let it settle, and convert it.
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    await api.watch.idle();
+    assert.deepEqual(api.watch.decisions(), []);
+    assert.equal(existsSync(path.join(served, 'arrived.webp')), false);
+    assert.equal(existsSync(path.join(served, 'arrived.png')), true);
   });
 
   it('never ran the config', () => {

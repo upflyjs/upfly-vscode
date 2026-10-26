@@ -3,14 +3,14 @@
  * The integration tests' configuration for `vscode-test`. `extension` runs the read-only tests
  * on the extension from this repository, `change` the tests that change files, `agents` those
  * of coding agents, and `update` those of the old extension's users, each on a workspace of its
- * own; `exit` the exit test on copies of Upfly's own fixtures, which UPFLY_FIXTURES names when
- * no checkout of Upfly sits beside this one.
+ * own; `watch` the watcher's tests and `exit` the exit test, both on copies of Upfly's own
+ * fixtures, which UPFLY_FIXTURES names when no checkout of Upfly sits beside this one.
  * `package` and `package-change` run the same tests on a built package, installed into the
  * test's VS Code, when UPFLY_VSIX names one. UPFLY_VSCODE_VERSION picks the VS Code version
  * (the current release by default), and UPFLY_VSCODE_EXECUTABLE an installation already on
  * disk.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { defineConfig } from '@vscode/test-cli';
@@ -22,6 +22,7 @@ import {
   exitWorkspace,
   fixtureWorkspace,
   updateWorkspace,
+  watchWorkspace,
 } from './test/integration/workspace.mjs';
 
 // The test's editor inherits this process's environment.
@@ -36,6 +37,7 @@ const exit =
   label === 'exit' ? exitWorkspace(exitRoot(), upflyFixtures(), FIXTURES).workspaceFile : read;
 const agents = label === 'agents' ? agentsWorkspace() : null;
 const update = label === 'update' ? updateWorkspace() : null;
+const watch = label === 'watch' ? await watchWorkspace(watchRoot(), upflyFixtures()) : null;
 const executable = process.env.UPFLY_VSCODE_EXECUTABLE;
 const vsix = process.env.UPFLY_VSIX;
 
@@ -55,6 +57,15 @@ const installed = {
 /** Where the exit test copies the fixtures: a short folder, as long paths fail on Windows. */
 function exitRoot() {
   return process.env.UPFLY_EXIT_ROOT ?? path.join(tmpdir(), 'upfly-exit');
+}
+
+/**
+ * Where the watcher's tests make their workspace: a short folder, as for the exit test, by its
+ * real path. File events name the real path, which on Windows can differ from the temporary
+ * folder's short name and on macOS from its link.
+ */
+function watchRoot() {
+  return process.env.UPFLY_WATCH_ROOT ?? path.join(realpathSync.native(tmpdir()), 'upfly-watch');
 }
 
 /** The fixtures folder of a checkout of Upfly's own repository, which the exit test copies. */
@@ -107,6 +118,16 @@ export default defineConfig([
       '--disable-extensions',
       ...(update === null ? [] : [`--user-data-dir=${update.userData}`]),
     ],
+  },
+  {
+    ...common,
+    label: 'watch',
+    files: 'test/integration/watch.test.cjs',
+    workspaceFolder: watch?.workspaceFile ?? read,
+    launchArgs: ['--disable-extensions'],
+    // git stops at the workspace's folder, so a folder without a repository of its own is
+    // never read as part of one above it.
+    ...(watch === null ? {} : { env: { GIT_CEILING_DIRECTORIES: watch.root } }),
   },
   {
     ...common,

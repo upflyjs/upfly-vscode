@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -128,6 +129,72 @@ export function exitWorkspace(root, fixtures, specs) {
   }
   const workspaceFile = path.join(root, 'exit.code-workspace');
   writeFileSync(workspaceFile, JSON.stringify({ folders: names.map((name) => ({ path: name })) }));
+  return { root, workspaceFile };
+}
+
+/**
+ * The workspace of the watcher's tests, in a short folder of its own, emptied first: a copy of
+ * Upfly's plain-html that watches its images folder, serves itself, and holds a line naming an
+ * image not there yet (site), with a branch whose commit adds two images; a copy of vite-react
+ * with no config, so every folder named public is watched (vite); each committed in a git
+ * repository of its own; and images made for the tests beside them (stock), each of its own
+ * bytes, which no repository has.
+ *
+ * @param {string} root the folder to make it in
+ * @param {string} fixtures the `fixtures` folder of a checkout of Upfly's repository
+ * @returns {Promise<{ root: string, workspaceFile: string }>}
+ */
+export async function watchWorkspace(root, fixtures) {
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(path.join(root, 'stock'), { recursive: true });
+  const { default: sharp } = await import('sharp');
+  /** A photo-like image of random noise, which no two calls make alike. @param {string} file */
+  const make = async (file) => {
+    const noise = sharp({
+      create: {
+        width: 160,
+        height: 120,
+        channels: 3,
+        background: '#808080',
+        noise: { type: 'gaussian', mean: 128, sigma: 40 },
+      },
+    });
+    const image = file.endsWith('.jpg') ? noise.jpeg({ quality: 95 }) : noise.png();
+    writeFileSync(file, await image.toBuffer());
+  };
+  for (const name of ['pasted.png', 'outside.png']) await make(path.join(root, 'stock', name));
+  for (let index = 1; index <= 51; index += 1) {
+    await make(path.join(root, 'stock', `burst-${String(index).padStart(2, '0')}.png`));
+  }
+  const site = path.join(root, 'site');
+  const vite = path.join(root, 'vite');
+  cpSync(path.join(fixtures, 'plain-html'), site, { recursive: true });
+  cpSync(path.join(fixtures, 'vite-react'), vite, {
+    recursive: true,
+    filter: (source) => !NOT_COPIED.has(path.basename(source)),
+  });
+  const config = { $schema: UPFLY_3, publicDirs: ['.'], watch: { folders: ['images'] } };
+  writeFileSync(path.join(site, 'upfly.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+  writeFileSync(
+    path.join(site, 'index.html'),
+    `${readFileSync(path.join(site, 'index.html'), 'utf8')}<img src="images/pasted.png" alt="A pasted image">\n`,
+  );
+  commitAll(site);
+  commitAll(vite);
+  /** @param {string[]} args */
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: site,
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: root },
+      stdio: 'pipe',
+    });
+  git('checkout', '-q', '-b', 'more-images');
+  await make(path.join(site, 'images', 'branch-a.png'));
+  await make(path.join(site, 'images', 'branch-b.jpg'));
+  commitAll(site, 'Two images on a branch');
+  git('checkout', '-q', '-');
+  const workspaceFile = path.join(root, 'watch.code-workspace');
+  writeFileSync(workspaceFile, JSON.stringify({ folders: [{ path: 'site' }, { path: 'vite' }] }));
   return { root, workspaceFile };
 }
 

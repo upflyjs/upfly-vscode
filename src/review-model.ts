@@ -5,6 +5,7 @@
  * mark for any other run counts for nothing, because the last run is then another one.
  */
 
+import path from 'node:path';
 import type { RunFile, RunList, RunPath, UndoResult } from './contract.js';
 import type { HostOutcome } from './host.js';
 
@@ -216,4 +217,16 @@ export function sameRun(runId: string): {
         ? null
         : `The last run is no longer run ${runId}, which this button was for, so nothing was undone. The review is read again.`,
   };
+}
+
+/**
+ * Whether a file is a folder's record of its last run, `.upfly/manifest.json` at its top,
+ * whose change means the review is read again. A run made without undo keeps its record in
+ * `.upfly/no-undo/` and never becomes the last run, so the review does not follow it.
+ *
+ * @param folder the workspace folder, an absolute path
+ * @param file the file that changed, an absolute path
+ */
+export function isLastRunRecord(folder: string, file: string): boolean {
+  return file === path.join(folder, '.upfly', 'manifest.json');
 }

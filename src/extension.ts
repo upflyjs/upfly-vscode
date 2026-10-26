@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { constants, setPriority } from 'node:os';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { type McpServer, registerAgents } from './agents-ui.js';
@@ -17,7 +18,7 @@ import {
   versionNotice,
 } from './bundled-cli.js';
 import type { AuditResult, CommandName, ErrorLine, RefsResult } from './contract.js';
-import type { Host } from './host.js';
+import type { Host, RunOptions } from './host.js';
 import { openLocation } from './locations.js';
 import { type NodeRuntime, chooseNode, nodeOnPath, versionOf } from './node-runtime.js';
 import { registerOldUsers } from './old-users-ui.js';
@@ -30,11 +31,16 @@ import { type ReviewPart, registerReview } from './review-ui.js';
 import { type RunHandle, type RunOutcome, startRun } from './runner.js';
 import { NodeTree, type ViewNode, viewNodes } from './tree.js';
 import { codeConfigRefusal, trustArgs } from './trust.js';
+import { type WatchPart, registerWatch } from './watch-ui.js';
 
 const IMAGE_GLOB = '**/*.{avif,gif,jpeg,jpg,png,svg,tif,tiff,webp}';
 const REPORT_SCHEME = 'upfly-report';
 /** Every image with its references for the view, and the report in the CLI's own words. */
 const AUDIT_ARGS = ['--include-images', '--include-text'];
+const READING = 'Upfly is reading the project. Click to cancel.';
+
+/** How a run shows and runs, beside its command line. */
+type RunExtras = Pick<RunOptions, 'steadyLabel' | 'tooltip' | 'env' | 'lowPriority'>;
 
 /** One folder's last audit, as the views and the report show it. */
 type FolderAudit =
@@ -90,6 +96,8 @@ export interface UpflyExports {
   oldSettings(): readonly SetSetting[];
   /** The folders whose upfly.config.json is the old extension's. */
   oldConfigs(): readonly string[];
+  /** The watcher for new images. */
+  readonly watch: WatchPart;
 }
 
 /**
@@ -111,7 +119,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   );
   status.name = 'Upfly';
   status.command = 'upfly.cancel';
-  status.tooltip = 'Upfly is reading the project. Click to cancel.';
+  status.tooltip = READING;
 
   let current: RunHandle | null = null;
   let cancelled = false;
@@ -277,11 +285,13 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     viewId: string | undefined,
     label: string,
     signal?: AbortSignal,
+    extras: RunExtras = {},
   ): Promise<RunOutcome | { kind: 'unavailable'; message: string }> {
     if ('message' in chosen) return { kind: 'unavailable', message: chosen.message };
     const all = [...args, ...trustArgs(vscode.workspace.isTrusted)];
     log.info(`upfly ${command} ${all.join(' ')} --json, in ${folder.uri.fsPath}`);
     status.text = `$(sync~spin) Upfly: ${label}`;
+    status.tooltip = extras.tooltip ?? READING;
     status.show();
     await vscode.commands.executeCommand('setContext', 'upfly.running', true);
     try {
@@ -293,8 +303,12 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
             command,
             args: all,
             cwd: folder.uri.fsPath,
+            ...(extras.env === undefined ? {} : { env: extras.env }),
+            ...(extras.lowPriority === true ? { onStarted: lowerPriority } : {}),
             onProgress: (line) => {
-              status.text = `$(sync~spin) Upfly: ${progressText(line)}`;
+              if (extras.steadyLabel !== true) {
+                status.text = `$(sync~spin) Upfly: ${progressText(line)}`;
+              }
             },
             onDiagnostic: (line) =>
               log.info(`${line.relative ?? line.asset ?? ''}: ${line.detail}`),
@@ -321,6 +335,20 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
       current = null;
       status.hide();
       await vscode.commands.executeCommand('setContext', 'upfly.running', false);
+    }
+  }
+
+  /**
+   * Puts a run below normal priority, so the encoding after a burst of new images never
+   * competes for the processor with the editor or the person's own work.
+   */
+  function lowerPriority(pid: number): void {
+    try {
+      setPriority(pid, constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch (error) {
+      log.warn(
+        `Could not lower the priority of process ${pid}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -518,7 +546,16 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
           const reason = check.accept(checked);
           if (reason !== null) return { kind: 'unavailable', message: reason } as const;
         }
-        return runIn(chosen, folder, command, args, options.viewId, options.label, options.signal);
+        return runIn(
+          chosen,
+          folder,
+          command,
+          args,
+          options.viewId,
+          options.label,
+          options.signal,
+          options,
+        );
       }),
     cliVersion: () => found?.cli.version ?? '',
     engine: async () => {
@@ -542,6 +579,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
   const planOf = registerOptimize(context, host, review);
   const agents = registerAgents(context, host);
   const oldUsers = registerOldUsers(context, host, agents);
+  const watch = registerWatch(context, host);
   for (const folder of fileFolders()) {
     if (existsSync(path.join(folder.uri.fsPath, '.upfly', 'manifest.json'))) {
       void review.show(folder, false);
@@ -618,6 +656,7 @@ export function activate(context: vscode.ExtensionContext): UpflyExports {
     checkNoticeAgain: () => oldUsers.checkNoticeAgain(),
     oldSettings: () => oldUsers.oldSettings(),
     oldConfigs: () => oldUsers.oldConfigs(),
+    watch,
   };
 }
 

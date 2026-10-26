@@ -20,6 +20,14 @@ export interface RunOptions {
   readonly viewId?: string;
   /** Stops this run: before it starts, it never does; while it runs, its process ends. */
   readonly signal?: AbortSignal;
+  /** The status bar keeps the label while the run goes, rather than showing each stage. */
+  readonly steadyLabel?: boolean;
+  /** What the status bar says on hover; it reads the project, click to cancel, by default. */
+  readonly tooltip?: string;
+  /** Variables for the run's environment, on top of the editor's. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** Runs the process below normal priority. */
+  readonly lowPriority?: boolean;
   /**
    * A command run first, in the same turn of the queue, so nothing can run between the two.
    * `accept` returns null to go on, or the reason not to, which the run ends with.

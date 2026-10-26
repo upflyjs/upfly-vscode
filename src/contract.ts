@@ -42,6 +42,8 @@ export interface ErrorLine {
   readonly reason?: string;
   /** What happened and what to do about it, in sentences. */
   readonly message: string;
+  /** The one file the stop is about, relative to the project, such as the config it would not run. */
+  readonly file?: string;
 }
 
 /** A path and line in the project, counted from 1, or null when the line is not known. */

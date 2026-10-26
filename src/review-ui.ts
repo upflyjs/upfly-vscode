@@ -21,6 +21,7 @@ import {
   accept,
   beforeDocument,
   beforeText,
+  isLastRunRecord,
   reviewOf,
   sameRun,
   undoneText,
@@ -611,8 +612,7 @@ export function registerReview(context: vscode.ExtensionContext, host: Host): Re
   const watcher = vscode.workspace.createFileSystemWatcher('**/.upfly/manifest.json');
   const onRecord = (uri: vscode.Uri): void => {
     const folder = vscode.workspace.getWorkspaceFolder(uri);
-    if (folder !== undefined && path.dirname(path.dirname(uri.fsPath)) === folder.uri.fsPath)
-      later(folder);
+    if (folder !== undefined && isLastRunRecord(folder.uri.fsPath, uri.fsPath)) later(folder);
   };
 
   context.subscriptions.push(
