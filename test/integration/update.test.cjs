@@ -34,6 +34,30 @@ async function lensTitles(uri) {
   return lenses.map((lens) => lens.command?.title ?? '');
 }
 
+/**
+ * The titles of the code actions VS Code offers on a range, asked again until one of them is
+ * `wanted` or ten seconds pass: for a document just opened, the first answer can come before
+ * the providers have seen it.
+ *
+ * @param {vscode.Uri} uri
+ * @param {vscode.Range} range
+ * @param {string} wanted
+ */
+async function codeActionTitles(uri, range, wanted) {
+  const until = Date.now() + 10_000;
+  for (;;) {
+    /** @type {vscode.CodeAction[] | undefined} */
+    const actions = await vscode.commands.executeCommand(
+      'vscode.executeCodeActionProvider',
+      uri,
+      range,
+    );
+    const titles = (actions ?? []).map((action) => action.title);
+    if (titles.includes(wanted) || Date.now() > until) return titles;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 describe("the old extension's users, on the first start after the update", function () {
   this.timeout(180_000);
   /** @type {any} */
@@ -94,13 +118,9 @@ describe("the old extension's users, on the first start after the update", funct
       [['old-extension-config', 'Upfly']],
     );
     await vscode.workspace.openTextDocument(config);
-    /** @type {vscode.CodeAction[]} */
-    const actions = await vscode.commands.executeCommand(
-      'vscode.executeCodeActionProvider',
-      config,
-      new vscode.Range(3, 0, 3, 0),
-    );
-    assert.ok(actions.some((action) => action.title === "Convert to Upfly 3's config"));
+    const fix = "Convert to Upfly 3's config";
+    const titles = await codeActionTitles(config, new vscode.Range(3, 0, 3, 0), fix);
+    assert.ok(titles.includes(fix), `"${fix}" among the code actions: ${titles.join(', ')}`);
   });
 
   it('audits nothing in that folder until it is converted, since the CLI refuses it', async () => {
