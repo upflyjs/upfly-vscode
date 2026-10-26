@@ -20,6 +20,8 @@ import type { NodeRuntime } from './node-runtime.js';
 
 /** The part of a child process the runner uses, so tests can drive one by hand. */
 export interface ChildLike {
+  /** The process id, once the process has started. */
+  readonly pid?: number | undefined;
   readonly stdout: Readable | null;
   readonly stderr: Readable | null;
   on(event: 'error', listener: (error: Error) => void): this;
@@ -47,6 +49,10 @@ export interface RunRequest {
   readonly args: readonly string[];
   /** The project folder, which the command reads. */
   readonly cwd: string;
+  /** Variables for the child's environment, on top of the rest. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** Called with the child's process id once it has started. */
+  readonly onStarted?: (pid: number) => void;
   readonly onProgress?: (line: ProgressLine) => void;
   readonly onDiagnostic?: (line: DiagnosticLine) => void;
   /** A line of output that is not part of the contract, such as one a preloaded module printed. */
@@ -124,7 +130,7 @@ export function startRun(
       [engine.cliBin, request.command, ...request.args, '--json'],
       {
         cwd: request.cwd,
-        env: { ...process.env, ...engine.node.env },
+        env: { ...process.env, ...engine.node.env, ...request.env },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       },
@@ -133,6 +139,7 @@ export function startRun(
     finish(couldNotStart(engine, error));
     return { outcome, cancel: () => {} };
   }
+  if (child.pid !== undefined) request.onStarted?.(child.pid);
 
   child.stdout?.on('data', (chunk: Buffer) => reader.push(chunk));
   child.stdout?.on('end', () => reader.end());

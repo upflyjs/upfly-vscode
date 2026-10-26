@@ -80,6 +80,24 @@ describe('startRun', () => {
     );
   });
 
+  it('adds the variables a run asks for on top of the rest', () => {
+    const { calls } = start({ env: { UV_THREADPOOL_SIZE: '2', RUN_AS: 'mine' } });
+    expect(calls[0]?.[2].env.UV_THREADPOOL_SIZE).toBe('2');
+    expect(calls[0]?.[2].env.RUN_AS).toBe('mine');
+  });
+
+  it('tells the run the id of the process it started, once', () => {
+    const pids: number[] = [];
+    const child = new FakeChild();
+    Object.assign(child, { pid: 4242 });
+    startRun(
+      ENGINE,
+      { command: 'optimize', args: [], cwd: '/project', onStarted: (pid) => pids.push(pid) },
+      () => child,
+    );
+    expect(pids).toEqual([4242]);
+  });
+
   it('reports each progress line as it arrives, in order', async () => {
     const seen: ProgressLine[] = [];
     const { child, handle } = start({ onProgress: (line) => seen.push(line) });
